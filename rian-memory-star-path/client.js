@@ -60,57 +60,71 @@ window.__ModuleLoader__.load({
       root.style.setProperty('--ms-nebula-3', theme.nebula3);
     }
 
+    function normalizeSettings(value) {
+      return { ...(value || {}), viewMode: '2d' };
+    }
+
     function hash01(value) {
       const x = Math.sin(value * 12.9898 + 78.233) * 43758.5453;
       return x - Math.floor(x);
     }
 
     function scatterTierCount(count) {
-      if (count > 60000) return 10;
-      if (count > 20000) return 8;
-      if (count > 2000) return 5;
-      return 1;
+      return count <= 600 ? 1 : Math.ceil(count / 600);
     }
 
-    function buildScatterLayout(stars, width, height, threeD, totalCount) {
-      const count = stars.length;
-      const total = Math.max(count, Number(totalCount) || count);
+    function buildScatterLayout(stars, width, height, threeD, totalCount, maxTier = Infinity) {
+      const total = Math.max(stars.length, Number(totalCount) || stars.length);
+      const capacity = total <= 600 ? Math.max(1, total) : 600;
       const tierCount = scatterTierCount(total);
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const maxRadius = Math.min(width, height) * 0.46;
       const ranked = stars
         .map((star) => ({
           star,
           weight: weightOf(star) + Number(star.importance ?? 0.5) * 0.6,
         }))
         .sort((a, b) => b.weight - a.weight);
-      const positions = new Map();
+      const visible = [];
       ranked.forEach((entry, rank) => {
-        const t = total <= 1 ? 0 : rank / (total - 1);
-        const tier = Math.min(tierCount - 1, Math.floor(t * tierCount));
-        const h1 = hash01(rank * 3 + 1);
-        const h2 = hash01(rank * 3 + 2);
-        const h3 = hash01(rank * 3 + 3);
-        const spread = Math.sqrt(h1);
-        const weightBias = (1 - t) * 0.22;
-        const radial =
-          maxRadius * Math.min(0.98, 0.42 + 0.5 * spread + weightBias);
-        const angle = rank * 2.399963 + (h2 - 0.5) * 0.35;
-        let x;
-        let y;
-        let z = 0;
-        if (threeD) {
-          const cosPhi = h3 * 2 - 1;
-          const sinPhi = Math.sqrt(Math.max(0, 1 - cosPhi * cosPhi));
-          x = centerX + Math.cos(angle) * sinPhi * radial;
-          y = centerY + Math.sin(angle) * sinPhi * radial;
-          z = cosPhi * radial;
-        } else {
-          x = centerX + Math.cos(angle) * radial;
-          y = centerY + Math.sin(angle) * radial;
+        const tier = Math.min(tierCount - 1, Math.floor(rank / capacity));
+        if (tier > maxTier) return;
+        visible.push({ ...entry, tier });
+      });
+      const count = visible.length;
+      const positions = new Map();
+      if (!count) return positions;
+      const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.2)));
+      const rows = Math.max(1, Math.ceil(count / cols));
+      const cell = Math.max(
+        20,
+        Math.min(width, height) / (Math.max(cols, rows) * 1.25),
+      );
+      const worldWidth = cols * cell;
+      const worldHeight = rows * cell;
+      const left = (width - worldWidth) / 2;
+      const top = (height - worldHeight) / 2;
+      const cells = [];
+      for (let row = 0; row < rows; row += 1) {
+        for (let col = 0; col < cols; col += 1) {
+          const x = left + (col + 0.5) * cell;
+          const y = top + (row + 0.5) * cell;
+          cells.push({
+            x,
+            y,
+            distance: Math.hypot(x - width / 2, y - height / 2),
+          });
         }
-        positions.set(entry.star.id, { x, y, z, tier });
+      }
+      cells.sort((a, b) => b.distance - a.distance);
+      visible.forEach((entry, index) => {
+        const slot = cells[index] || cells[cells.length - 1];
+        const jitterX = (hash01(index * 5 + 1) - 0.5) * cell * 0.3;
+        const jitterY = (hash01(index * 5 + 4) - 0.5) * cell * 0.3;
+        positions.set(entry.star.id, {
+          x: slot.x + jitterX,
+          y: slot.y + jitterY,
+          z: 0,
+          tier: entry.tier,
+        });
       });
       return positions;
     }
@@ -440,7 +454,7 @@ void main() {
           gl.clear(gl.COLOR_BUFFER_BIT);
           gl.enable(gl.BLEND);
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-          const scale = Math.max(0.2, Math.min(16, Number(zoom) || 1));
+          const scale = Math.max(0.2, Math.min(64, Number(zoom) || 1));
           const centerX = width / 2;
           const centerY = height / 2;
           const project = (x, y) => ({
@@ -1046,7 +1060,7 @@ void main() {
       const [pendingSelectId, setPendingSelectId] = React.useState(null);
       const [nebulaSelected, setNebulaSelected] = React.useState([]);
       const [bulkConfirm, setBulkConfirm] = React.useState(null);
-      const [settings, setSettings] = React.useState(null);
+      const [settings, setSettings] = React.useState({ viewMode: '2d', theme: 'dark' });
       const [nebulaOpen, setNebulaOpen] = React.useState(false);
       const [mapToast, setMapToast] = React.useState(null);
       const [exportConfirm, setExportConfirm] = React.useState(false);
@@ -1081,7 +1095,7 @@ void main() {
       React.useEffect(() => {
         let alive = true;
         api('/settings')
-          .then((value) => alive && setSettings(value.settings || {}))
+          .then((value) => alive && setSettings(normalizeSettings(value.settings)))
           .catch(() => {});
         api('/maps')
           .then((value) => {
@@ -1235,7 +1249,7 @@ void main() {
       React.useEffect(() => {
         if (!data?.hasMore) return;
         const total = data.total || data.stars.length;
-        const needed = Math.ceil(((revealTier + 1) / tierCount) * total);
+        const needed = Math.min(total, (revealTier + 1) * 600);
         if (data.stars.length < needed) loadMore();
       }, [revealTier, data, tierCount]);
 
@@ -1265,8 +1279,9 @@ void main() {
           active,
           width,
           height,
-          settings?.viewMode !== '2d',
+          false,
           data?.total || active.length,
+          revealTier,
         );
         const scatterState = layoutRef.current;
         scatterState.positions = scatterInitial;
@@ -1390,11 +1405,11 @@ void main() {
             state.url = null;
           }
         };
-      }, [data, size.width, size.height, settings?.viewMode]);
+      }, [data, size.width, size.height, settings?.viewMode, revealTier]);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
-        const viewMode = settings?.viewMode === '2d' ? '2d' : '3d';
+        const viewMode = '2d';
         const canSwitch = maps.length > 1;
         if (!canvas) return undefined;
         const switchMap = (deltaY) => {
@@ -1421,13 +1436,13 @@ void main() {
           }
           const next = Math.max(
             1,
-            Math.min(4, zoom2d * (event.deltaY > 0 ? 0.85 : 1.18)),
+            Math.min(64, zoom2d * (event.deltaY > 0 ? 0.85 : 1.18)),
           );
           setZoom2d(next);
           setRevealTier(
             Math.min(
               tierCount - 1,
-              Math.floor(((next - 1) / 3) * Math.max(0, tierCount - 1)),
+              Math.floor(((next - 1) / 63) * Math.max(0, tierCount - 1)),
             ),
           );
         };
@@ -1448,7 +1463,7 @@ void main() {
         const height = Math.max(240, size.height);
         const dpr = window.devicePixelRatio || 1;
 
-        const mode = settings?.viewMode === '2d' ? '2d' : '3d';
+        const mode = '2d';
         if (
           !glRef.current.renderer ||
           glRef.current.canvas !== canvas ||
@@ -1467,8 +1482,9 @@ void main() {
           const stored = layoutRef.current.positions;
           const stars = (data?.stars || []).filter((star) => {
             if (star.status !== 'active') return false;
-            const tier = stored.get(star.id)?.tier ?? 0;
-            if (tier > revealTier) return false;
+            const point = stored.get(star.id);
+            if (!point) return false;
+            if (point.tier > revealTier) return false;
             const queryText = query.trim().toLowerCase();
             if (!queryText) return true;
             const haystack = [star.title, star.fact, star.reason, star.condition, (star.tags || []).join(' ')]
@@ -2024,7 +2040,7 @@ void main() {
             method: 'POST',
             body: JSON.stringify({ noMemoryWorkspaces: next }),
           });
-          setSettings(updated.settings || settings);
+          setSettings(normalizeSettings(updated.settings || settings));
           setMapToast(
             next.includes(workspaceId) ? '此工作区已暂停记忆' : '此工作区已恢复记忆',
           );
@@ -3856,7 +3872,7 @@ void main() {
     }
 
     function Settings() {
-      const [settings, setSettings] = React.useState(null);
+      const [settings, setSettings] = React.useState({ viewMode: '2d', theme: 'dark' });
       const [saved, setSaved] = React.useState(false);
       const [error, setError] = React.useState(null);
       const [health, setHealth] = React.useState(null);
@@ -3872,7 +3888,7 @@ void main() {
         Promise.all([api('/settings'), api('/health')])
           .then(([value, healthValue]) => {
             if (!alive) return;
-            setSettings(value.settings || {});
+            setSettings(normalizeSettings(value.settings));
             setDefaults(value.defaults || {});
             setHealth(healthValue);
           })
@@ -3888,7 +3904,7 @@ void main() {
 
       function update(patch) {
         const next = { ...settings, ...patch };
-        setSettings(next);
+        setSettings(normalizeSettings(next));
         api('/settings', { method: 'POST', body: JSON.stringify(next) })
           .then(() => {
             setSaved(true);
@@ -4148,14 +4164,9 @@ void main() {
         field(
           '视图',
           h(
-            'select',
-            {
-              value: settings.viewMode || '3d',
-              onChange: (event) => update({ viewMode: event.target.value }),
-              style: { padding: '6px 8px', borderRadius: '8px', maxWidth: '160px' },
-            },
-            h('option', { value: '3d' }, '3D 群星'),
-            h('option', { value: '2d' }, '平面星图'),
+            'span',
+            { style: { fontSize: '12px', opacity: 0.7 } },
+            '2D 平面散布',
           ),
         ),
         field(
