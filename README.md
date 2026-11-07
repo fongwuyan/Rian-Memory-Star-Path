@@ -198,4 +198,6 @@ $env:DSH_MEMORY_API = "http://127.0.0.1:51107/plugins/rian-memory-star-path/api-
 
 ## 许可证
 
-本仓库暂未附带 LICENSE 文件。使用、分发前请先与作者确认。
+本项目使用 [MIT License](LICENSE)。
+
+Copyright (c) 2026 fongwuyan
