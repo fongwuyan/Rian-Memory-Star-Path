@@ -490,6 +490,7 @@ void main() {
       const [nebulaOpen, setNebulaOpen] = React.useState(false);
       const [mapToast, setMapToast] = React.useState(null);
       const [exportConfirm, setExportConfirm] = React.useState(false);
+      const [archiveOpen, setArchiveOpen] = React.useState(false);
       const [onboarded, setOnboarded] = React.useState(() => {
         try {
           return window.localStorage.getItem('rian-memory-star-onboarded-v1') === '1';
@@ -898,6 +899,9 @@ void main() {
       const selected = (data?.stars || []).find((star) => star.id === selectedId) || null;
       const pending = (data?.stars || []).filter((star) => star.status === 'pending');
       const activeCount = (data?.stars || []).filter((star) => star.status === 'active').length;
+      const archivedStars = (data?.stars || [])
+        .filter((star) => star.status === 'archived')
+        .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
       const activeWorkspaceId = maps.find((map) => map.id === activeId)?.workspaceId || null;
       const workspaceMuted = Boolean(
         activeWorkspaceId &&
@@ -1285,6 +1289,21 @@ void main() {
                   onClick: toggleWorkspaceMemory,
                 },
                 workspaceMuted ? '已暂停' : '暂停',
+              )
+            : null,
+          activeId
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  title: '查看归档记忆',
+                  style: {
+                    ...tabStyle('__archive'),
+                    background: 'rgba(255,255,255,0.06)',
+                  },
+                  onClick: () => setArchiveOpen(true),
+                },
+                `归档 ${archivedStars.length}`,
               )
             : null,
           activeId
@@ -2349,6 +2368,103 @@ void main() {
           h('span', { style: { flex: 1 } }),
           h('span', null, maps.find((map) => map.id === activeId)?.name || ''),
         ),
+        archiveOpen
+          ? h(
+              'div',
+              {
+                style: {
+                  position: 'fixed',
+                  inset: 0,
+                  zIndex: 70,
+                  display: 'grid',
+                  placeItems: 'center',
+                  background: 'rgba(4,7,18,0.7)',
+                },
+                onClick: () => setArchiveOpen(false),
+              },
+              h(
+                'div',
+                {
+                  style: {
+                    width: '520px',
+                    maxWidth: 'calc(100vw - 32px)',
+                    maxHeight: '70vh',
+                    overflow: 'auto',
+                    padding: '16px',
+                    borderRadius: '14px',
+                    border: '1px solid rgba(190,205,255,0.2)',
+                    background: '#10162f',
+                    color: '#E8ECFF',
+                  },
+                  onClick: (event) => event.stopPropagation(),
+                },
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', marginBottom: '8px' } },
+                  h('div', { style: { fontSize: '15px', fontWeight: 600 } }, `归档 · ${archivedStars.length}`),
+                  h('div', { style: { flex: 1 } }),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      onClick: () => setArchiveOpen(false),
+                      style: { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
+                    },
+                    '×',
+                  ),
+                ),
+                archivedStars.length
+                  ? archivedStars.map((star) =>
+                      h(
+                        'div',
+                        {
+                          key: star.id,
+                          style: {
+                            display: 'flex',
+                            gap: '8px',
+                            alignItems: 'center',
+                            padding: '8px 0',
+                            borderBottom: '1px solid rgba(190,205,255,0.1)',
+                          },
+                        },
+                        h(
+                          'div',
+                          { style: { flex: 1, minWidth: 0 } },
+                          h('div', { style: { fontSize: '12px', fontWeight: 600 } }, star.title),
+                          h(
+                            'div',
+                            { style: { opacity: 0.65, fontSize: '11px', marginTop: '2px', wordBreak: 'break-word' } },
+                            star.fact,
+                          ),
+                          h(
+                            'div',
+                            { style: { opacity: 0.45, fontSize: '10px', marginTop: '2px' } },
+                            `${star.type} · ${new Date(star.updatedAt).toLocaleString()}`,
+                          ),
+                        ),
+                        h(
+                          'button',
+                          { type: 'button', onClick: () => updateStar(star, { status: 'active' }) },
+                          '恢复',
+                        ),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            onClick: () => {
+                              setArchiveOpen(false);
+                              setConfirmDelete({ kind: 'star', id: star.id, label: star.title });
+                            },
+                            style: { color: '#FF9E9E' },
+                          },
+                          '删除',
+                        ),
+                      ),
+                    )
+                  : h('div', { style: { opacity: 0.6, fontSize: '12px', padding: '12px 0' } }, '没有归档的记忆。'),
+              ),
+            )
+          : null,
         exportConfirm
           ? h(
               'div',
