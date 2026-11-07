@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
         nebula1: 'rgba(90,70,200,0.28)',
         nebula2: 'rgba(20,120,180,0.2)',
         nebula3: 'rgba(255,120,200,0.1)',
+        coreGlow: 'rgba(255,230,170,0.16)',
       },
       light: {
         bg: '#F4F6FB',
@@ -37,6 +38,7 @@ window.__ModuleLoader__.load({
         nebula1: 'rgba(120,140,255,0.18)',
         nebula2: 'rgba(80,200,220,0.14)',
         nebula3: 'rgba(255,160,220,0.12)',
+        coreGlow: 'rgba(90,120,255,0.12)',
       },
     };
 
@@ -58,6 +60,7 @@ window.__ModuleLoader__.load({
       root.style.setProperty('--ms-nebula-1', theme.nebula1);
       root.style.setProperty('--ms-nebula-2', theme.nebula2);
       root.style.setProperty('--ms-nebula-3', theme.nebula3);
+      root.style.setProperty('--ms-core-glow', theme.coreGlow);
     }
 
     applyTheme('dark');
@@ -578,6 +581,7 @@ void main() {
         velocityYaw: 0,
         velocityPitch: 0,
         lastTime: 0,
+        orbitPhase: 0,
       };
 
       function perspective(fovy, aspect, near, far) {
@@ -651,6 +655,7 @@ void main() {
           camera.lastTime = time;
           if (camera.autoRotate && !camera.dragging) {
             camera.yaw += dt * 0.16;
+            camera.orbitPhase += dt * 0.22;
           }
           camera.yaw += camera.velocityYaw;
           camera.pitch = Math.max(
@@ -694,6 +699,7 @@ void main() {
           camera.dragging = false;
           camera.velocityYaw = 0;
           camera.velocityPitch = 0;
+          camera.orbitPhase = 0;
         },
         draw(width, height, dpr, positions, edges) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
@@ -717,6 +723,19 @@ void main() {
           const view = lookAt(eye, target, [0, 1, 0]);
           const projection = perspective(Math.PI / 4, width / height, 0.1, 20);
           const viewProjection = multiply(projection, view);
+          const orbit = (x, y, z) => {
+            const dx = x - width / 2;
+            const dy = y - height / 2;
+            const radius = Math.hypot(dx, dy) / minDim;
+            const angle = camera.orbitPhase / (0.35 + radius * 2.2);
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            return {
+              x: width / 2 + dx * cos - dy * sin,
+              y: height / 2 + dx * sin + dy * cos,
+              z,
+            };
+          };
           const project = (x, y, z) => {
             const nx = (x - width / 2) / minDim;
             const ny = -(y - height / 2) / minDim;
@@ -757,8 +776,10 @@ void main() {
           if (edges.length) {
             const lineValues = [];
             for (const edge of edges) {
-              const from = project(edge.from.x, edge.from.y, edge.from.z);
-              const to = project(edge.to.x, edge.to.y, edge.to.z);
+              const fromWorld = orbit(edge.from.x, edge.from.y, edge.from.z);
+              const toWorld = orbit(edge.to.x, edge.to.y, edge.to.z);
+              const from = project(fromWorld.x, fromWorld.y, fromWorld.z);
+              const to = project(toWorld.x, toWorld.y, toWorld.z);
               if (!from.visible || !to.visible) continue;
               lineValues.push(from.nx, from.ny, from.nz, to.nx, to.ny, to.nz);
             }
@@ -782,7 +803,8 @@ void main() {
             const phaseData = new Float32Array(count);
             const projected = [];
             positions.forEach((item, index) => {
-              const point = project(item.x, item.y, item.z);
+              const world = orbit(item.x, item.y, item.z);
+              const point = project(world.x, world.y, world.z);
               const weight = weightOf(item.star);
               const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
               positionData[index * 3] = point.nx;
@@ -803,9 +825,9 @@ void main() {
                 ...item,
                 x: point.sx,
                 y: point.sy,
-                worldX: item.x,
-                worldY: item.y,
-                worldZ: item.z,
+                worldX: world.x,
+                worldY: world.y,
+                worldZ: world.z,
                 depth: point.depth,
                 visible: point.visible,
               });
@@ -861,6 +883,51 @@ void main() {
         surface.stroke();
       }
       const byId = new Map(positions.map((item) => [item.star.id, item]));
+      const coreX = width / 2;
+      const coreY = height / 2;
+      const coreRadius = Math.min(width, height) * 0.11;
+      const pulse = 0.96 + 0.04 * Math.sin(Date.now() / 1000 / 1.6);
+      const coreGlow = surface.createRadialGradient(
+        coreX,
+        coreY,
+        0,
+        coreX,
+        coreY,
+        coreRadius * 2.6 * pulse,
+      );
+      coreGlow.addColorStop(0, 'rgba(255,255,255,0.92)');
+      coreGlow.addColorStop(0.08, 'rgba(255,245,210,0.68)');
+      coreGlow.addColorStop(0.22, 'rgba(127,216,255,0.28)');
+      coreGlow.addColorStop(1, 'rgba(127,216,255,0)');
+      surface.fillStyle = coreGlow;
+      surface.beginPath();
+      surface.arc(coreX, coreY, coreRadius * 2.6 * pulse, 0, Math.PI * 2);
+      surface.fill();
+      for (let ring = 0; ring < 3; ring += 1) {
+        surface.strokeStyle = `rgba(190,220,255,${0.12 - ring * 0.03})`;
+        surface.lineWidth = 1;
+        surface.beginPath();
+        surface.arc(coreX, coreY, coreRadius * (1.15 + ring * 0.42) * pulse, 0, Math.PI * 2);
+        surface.stroke();
+      }
+      for (let ray = 0; ray < 8; ray += 1) {
+        const angle = (ray / 8) * Math.PI * 2 + Date.now() / 12000;
+        surface.strokeStyle = 'rgba(200,225,255,0.07)';
+        surface.beginPath();
+        surface.moveTo(
+          coreX + Math.cos(angle) * coreRadius * 1.15,
+          coreY + Math.sin(angle) * coreRadius * 1.15,
+        );
+        surface.lineTo(
+          coreX + Math.cos(angle) * coreRadius * 2.1,
+          coreY + Math.sin(angle) * coreRadius * 2.1,
+        );
+        surface.stroke();
+      }
+      surface.fillStyle = 'rgba(255,255,255,0.95)';
+      surface.beginPath();
+      surface.arc(coreX, coreY, Math.max(2, coreRadius * 0.08), 0, Math.PI * 2);
+      surface.fill();
       for (const [index, constellation] of (constellations || []).entries()) {
         const members = (constellation.starIds || [])
           .map((starId) => byId.get(starId))
@@ -1931,7 +1998,8 @@ void main() {
           'style',
           null,
           `
-.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;background:radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
+.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;mix-blend-mode:screen;background:radial-gradient(circle at 50% 50%,var(--ms-core-glow),transparent 30%),radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
+.ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(34px);opacity:.32;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 32%,var(--ms-nebula-2),transparent 68%,var(--ms-nebula-3),transparent);animation:ms-spin 90s linear infinite}
 .ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(200,220,255,.45) 1px,transparent 1px),radial-gradient(circle,rgba(255,255,255,.28) 1px,transparent 1px);background-size:97px 97px,151px 151px;background-position:0 0,40px 60px;opacity:.35}
 .ms-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;background:radial-gradient(circle at 50% 45%,transparent 38%,var(--ms-vignette) 100%)}
 .ms-glass{backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12)}
@@ -1950,6 +2018,7 @@ void main() {
 .ms-shell input:focus,.ms-shell select:focus{border-color:var(--ms-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ms-accent) 18%,transparent)}
 .ms-shell ::selection{background:color-mix(in srgb,var(--ms-accent) 35%,transparent);color:var(--ms-text)}
 @keyframes ms-drift{from{transform:translate3d(-2%,-1%,0) scale(1.04)}to{transform:translate3d(2%,1%,0) scale(1.12)}}
+@keyframes ms-spin{to{transform:rotate(360deg)}}
 @keyframes ms-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 `,
         ),
