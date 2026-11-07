@@ -410,6 +410,20 @@ export function apply(ctx) {
                 Number(found.confidence || 0),
                 Number(star.confidence || 0),
               );
+              found.recallCount = Math.max(
+                Number(found.recallCount || 0),
+                Number(star.recallCount || 0),
+              );
+              found.mergedFrom = Array.isArray(found.mergedFrom) ? found.mergedFrom : [];
+              found.mergedFrom.push({
+                title: star.title || found.title,
+                fact: star.fact || found.fact,
+                at: nowIso(),
+                source: 'import',
+              });
+              if (found.mergedFrom.length > 10) {
+                found.mergedFrom = found.mergedFrom.slice(-10);
+              }
               const changes = diffFields(before, found, ['tags', 'refs', 'confidence']);
               if (changes.length) {
                 found.updatedAt = nowIso();
@@ -1097,6 +1111,14 @@ export function apply(ctx) {
       existing.tags = [...new Set([...(existing.tags || []), ...(Array.isArray(input.tags) ? input.tags : [])])].slice(0, 5);
       existing.refs = [...new Set([...(existing.refs || []), ...(Array.isArray(input.refs) ? input.refs : [])])].slice(0, 5);
       existing.confidence = Math.max(Number(existing.confidence || 0), Number(input.confidence ?? 0));
+      existing.mergedFrom = Array.isArray(existing.mergedFrom) ? existing.mergedFrom : [];
+      existing.mergedFrom.push({
+        title: title || existing.title,
+        fact: fact || existing.fact,
+        at: nowIso(),
+        source: 'model',
+      });
+      if (existing.mergedFrom.length > 10) existing.mergedFrom = existing.mergedFrom.slice(-10);
       if (existing.status === 'pending' && maps.get(mapId)?.map.kind !== 'public' && existing.confidence >= Number(settings.directActiveConfidence ?? 0.85)) {
         existing.status = 'active';
       }
@@ -1795,6 +1817,18 @@ export function apply(ctx) {
                   .filter(Boolean)
                   .join('；')
                   .slice(0, 120);
+                keep.star.mergedFrom = Array.isArray(keep.star.mergedFrom)
+                  ? keep.star.mergedFrom
+                  : [];
+                keep.star.mergedFrom.push({
+                  title: drop.star.title,
+                  fact: drop.star.fact,
+                  at: nowIso(),
+                  source: 'conflict',
+                });
+                if (keep.star.mergedFrom.length > 10) {
+                  keep.star.mergedFrom = keep.star.mergedFrom.slice(-10);
+                }
               }
             }
             for (const edge of data.edges) {

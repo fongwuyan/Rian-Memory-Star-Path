@@ -1633,6 +1633,23 @@ void main() {
                       ),
                     )
                   : null,
+                (selected.mergedFrom || []).length
+                  ? h(
+                      'div',
+                      { style: { marginTop: '8px', fontSize: '11px', opacity: 0.72 } },
+                      h('div', { style: { opacity: 0.6 } }, '合并来源'),
+                      ...selected.mergedFrom.slice(-5).map((item, index) =>
+                        h(
+                          'div',
+                          {
+                            key: index,
+                            style: { marginTop: '2px', wordBreak: 'break-word' },
+                          },
+                          `「${item.title}」${item.fact}`,
+                        ),
+                      ),
+                    )
+                  : null,
                 (selected.history || []).length
                   ? h(
                       'details',
