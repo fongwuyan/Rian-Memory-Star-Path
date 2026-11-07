@@ -69,61 +69,58 @@ window.__ModuleLoader__.load({
       return x - Math.floor(x);
     }
 
-    function scatterTierCount(count) {
-      return count <= 600 ? 1 : Math.ceil(count / 600);
-    }
+    const layoutCellCache = new Map();
 
-    function buildScatterLayout(stars, width, height, threeD, totalCount, maxTier = Infinity) {
+    function buildScatterLayout(stars, width, height, totalCount) {
       const total = Math.max(stars.length, Number(totalCount) || stars.length);
-      const capacity = total <= 600 ? Math.max(1, total) : 600;
-      const tierCount = scatterTierCount(total);
+      if (!total) return new Map();
+      const cacheKey = `${total}:${width}:${height}`;
+      let cached = layoutCellCache.get(cacheKey);
+      if (!cached) {
+        const cols = Math.max(1, Math.ceil(Math.sqrt(total * 1.2)));
+        const rows = Math.max(1, Math.ceil(total / cols));
+        const room = Math.max(width, height) * 1.2;
+        const cell = Math.max(24, room / Math.max(cols, rows));
+        const worldWidth = cols * cell;
+        const worldHeight = rows * cell;
+        const left = (width - worldWidth) / 2;
+        const top = (height - worldHeight) / 2;
+        const cells = [];
+        for (let row = 0; row < rows; row += 1) {
+          for (let col = 0; col < cols; col += 1) {
+            const x = left + (col + 0.5) * cell;
+            const y = top + (row + 0.5) * cell;
+            cells.push({
+              x,
+              y,
+              distance: Math.hypot(x - width / 2, y - height / 2),
+            });
+          }
+        }
+        cells.sort((a, b) => b.distance - a.distance);
+        cached = { cells, cell };
+        if (layoutCellCache.size > 6) {
+          layoutCellCache.clear();
+        }
+        layoutCellCache.set(cacheKey, cached);
+      }
       const ranked = stars
         .map((star) => ({
           star,
           weight: weightOf(star) + Number(star.importance ?? 0.5) * 0.6,
         }))
         .sort((a, b) => b.weight - a.weight);
-      const visible = [];
-      ranked.forEach((entry, rank) => {
-        const tier = Math.min(tierCount - 1, Math.floor(rank / capacity));
-        if (tier > maxTier) return;
-        visible.push({ ...entry, tier });
-      });
-      const count = visible.length;
       const positions = new Map();
-      if (!count) return positions;
-      const cols = Math.max(1, Math.ceil(Math.sqrt(count * 1.2)));
-      const rows = Math.max(1, Math.ceil(count / cols));
-      const cell = Math.max(
-        20,
-        Math.min(width, height) / (Math.max(cols, rows) * 1.25),
-      );
-      const worldWidth = cols * cell;
-      const worldHeight = rows * cell;
-      const left = (width - worldWidth) / 2;
-      const top = (height - worldHeight) / 2;
-      const cells = [];
-      for (let row = 0; row < rows; row += 1) {
-        for (let col = 0; col < cols; col += 1) {
-          const x = left + (col + 0.5) * cell;
-          const y = top + (row + 0.5) * cell;
-          cells.push({
-            x,
-            y,
-            distance: Math.hypot(x - width / 2, y - height / 2),
-          });
-        }
-      }
-      cells.sort((a, b) => b.distance - a.distance);
-      visible.forEach((entry, index) => {
-        const slot = cells[index] || cells[cells.length - 1];
-        const jitterX = (hash01(index * 5 + 1) - 0.5) * cell * 0.3;
-        const jitterY = (hash01(index * 5 + 4) - 0.5) * cell * 0.3;
+      const cell = cached.cell;
+      ranked.forEach((entry, rank) => {
+        const slot = cached.cells[rank];
+        if (!slot) return;
+        const jitterX = (hash01(rank * 5 + 1) - 0.5) * cell * 0.3;
+        const jitterY = (hash01(rank * 5 + 4) - 0.5) * cell * 0.3;
         positions.set(entry.star.id, {
           x: slot.x + jitterX,
           y: slot.y + jitterY,
           z: 0,
-          tier: entry.tier,
         });
       });
       return positions;
@@ -444,7 +441,7 @@ void main() {
       return {
         kind: '2d',
         canvas,
-        draw(width, height, dpr, positions, edges, zoom = 1, panX = 0, panY = 0) {
+        draw(width, height, dpr, positions, edges, panX = 0, panY = 0) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
           const pixelHeight = Math.max(1, Math.floor(height * dpr));
           if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
@@ -454,13 +451,7 @@ void main() {
           gl.clear(gl.COLOR_BUFFER_BIT);
           gl.enable(gl.BLEND);
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-          const scale = Math.max(0.2, Math.min(64, Number(zoom) || 1));
-          const centerX = width / 2;
-          const centerY = height / 2;
-          const project = (x, y) => ({
-            x: (x - centerX) * scale + centerX + panX,
-            y: (y - centerY) * scale + centerY + panY,
-          });
+          const project = (x, y) => ({ x: x + panX, y: y + panY });
           const projected = [];
 
           if (edges.length) {
@@ -484,13 +475,16 @@ void main() {
           }
 
           const count = positions.length;
+          const heavy = count > 20000;
           if (count) {
             const positionData = new Float32Array(count * 2);
             const sizeData = new Float32Array(count);
             const colorData = new Float32Array(count * 3);
             positions.forEach((item, index) => {
-              const weight = weightOf(item.star);
-              const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
+              const weight = heavy ? 0.5 : weightOf(item.star);
+              const radius = heavy
+                ? 2.2 + 3 * Number(item.star.importance ?? 0.5)
+                : 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
               const point = project(item.x, item.y);
               positionData[index * 2] = point.x * dpr;
               positionData[index * 2 + 1] = point.y * dpr;
@@ -1079,14 +1073,9 @@ void main() {
       const drawRef = React.useRef(null);
       const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
       const hoveredIdRef = React.useRef(null);
-      const loadingMoreRef = React.useRef(false);
-      const pendingFullLoadRef = React.useRef('');
       const pan2dRef = React.useRef({ x: 0, y: 0 });
       const [hovered, setHovered] = React.useState(null);
       const [autoRotate, setAutoRotate] = React.useState(true);
-      const [revealTier, setRevealTier] = React.useState(0);
-      const [zoom2d, setZoom2d] = React.useState(1);
-      const tierCount = scatterTierCount(data?.total || (data?.stars || []).length);
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1121,88 +1110,41 @@ void main() {
         applyTheme(settings?.theme || 'dark');
       }, [settings?.theme]);
 
-      const loadMap = React.useCallback(
-        (mapId) => {
-          if (!mapId) return;
-          const pageUrl = `/maps/${encodeURIComponent(mapId)}/page?offset=0&limit=5000`;
-          api(pageUrl)
-            .then((value) => {
-              const stars = value.stars || [];
-              setData({
-                ...value,
-                stars,
-                edges: value.edges || [],
-                constellations: value.constellations || [],
-                total: value.total ?? stars.length,
-                nextOffset: value.nextOffset ?? stars.length,
-                hasMore: Boolean(value.hasMore),
-              });
-              setSelectedId(null);
-            })
-            .catch(() =>
-              api(`/maps/${encodeURIComponent(mapId)}`).then((value) => {
-                const stars = value.stars || [];
-                setData({
-                  ...value,
-                  stars,
-                  edges: value.edges || [],
-                  constellations: value.constellations || [],
-                  total: stars.length,
-                  nextOffset: stars.length,
-                  hasMore: false,
-                });
-                setSelectedId(null);
-              }),
-            )
-            .catch((cause) => setError(String(cause.message || cause)));
-        },
-        [],
-      );
-
-      function loadMore() {
-        if (!data?.hasMore || loadingMoreRef.current || !data.map?.id) return;
-        loadingMoreRef.current = true;
-        const offset = data.nextOffset ?? data.stars.length;
-        api(
-          `/maps/${encodeURIComponent(data.map.id)}/page?offset=${offset}&limit=5000`,
-        )
-          .then((page) => {
-            const incoming = page.stars || [];
-            setData((previous) => {
-              if (!previous) return previous;
-              const known = new Set(previous.stars.map((star) => star.id));
-              const mergedStars = [...previous.stars];
-              for (const star of incoming) {
-                if (!known.has(star.id)) {
-                  known.add(star.id);
-                  mergedStars.push(star);
-                }
-              }
-              const edgeKey = (edge) => `${edge.from}|${edge.to}|${edge.relation || ''}`;
-              const knownEdges = new Set(previous.edges.map(edgeKey));
-              const mergedEdges = [...previous.edges];
-              for (const edge of page.edges || []) {
-                const key = edgeKey(edge);
-                if (!knownEdges.has(key)) {
-                  knownEdges.add(key);
-                  mergedEdges.push(edge);
-                }
-              }
-              return {
-                ...previous,
-                stars: mergedStars,
-                edges: mergedEdges,
-                total: page.total ?? previous.total,
-                nextOffset: page.nextOffset ?? mergedStars.length,
-                hasMore: Boolean(page.hasMore) && incoming.length > 0,
-              };
-            });
-          })
-          .catch((cause) => setError(String(cause.message || cause)))
-          .finally(() => {
-            loadingMoreRef.current = false;
+      const loadMap = React.useCallback(async (mapId) => {
+        if (!mapId) return;
+        try {
+          let page = await api(
+            `/maps/${encodeURIComponent(mapId)}/page?offset=0&limit=5000`,
+          );
+          let stars = page.stars || [];
+          let edges = page.edges || [];
+          let nextOffset = page.nextOffset ?? stars.length;
+          let hasMore = Boolean(page.hasMore);
+          let guard = 0;
+          while (hasMore && guard < 400) {
+            const next = await api(
+              `/maps/${encodeURIComponent(mapId)}/page?offset=${nextOffset}&limit=5000`,
+            );
+            stars = stars.concat(next.stars || []);
+            edges = edges.concat(next.edges || []);
+            nextOffset = next.nextOffset ?? stars.length;
+            hasMore = Boolean(next.hasMore);
+            guard += 1;
+          }
+          setData({
+            ...page,
+            stars: stars.concat(page.inactive || []),
+            edges,
+            constellations: page.constellations || [],
+            total: page.total ?? stars.length,
+            nextOffset: stars.length,
+            hasMore: false,
           });
-      }
+          setSelectedId(null);
+        } catch (cause) {
+          setError(String(cause.message || cause));
+        }
+      }, []);
 
       React.useEffect(() => {
         loadMap(activeId);
@@ -1221,37 +1163,6 @@ void main() {
         }, 250);
         return () => window.clearTimeout(timer);
       }, [query]);
-
-      React.useEffect(() => {
-        if (!pendingSelectId) return;
-        if ((data?.stars || []).some((star) => star.id === pendingSelectId)) {
-          setSelectedId(pendingSelectId);
-          setPendingSelectId(null);
-          return;
-        }
-        if (data?.hasMore && data.map?.id && pendingFullLoadRef.current !== pendingSelectId) {
-          pendingFullLoadRef.current = pendingSelectId;
-          api(`/maps/${encodeURIComponent(data.map.id)}`)
-            .then((full) => {
-              const stars = full.stars || [];
-              setData({
-                ...full,
-                stars,
-                total: stars.length,
-                nextOffset: stars.length,
-                hasMore: false,
-              });
-            })
-            .catch((cause) => setError(String(cause.message || cause)));
-        }
-      }, [data, pendingSelectId]);
-
-      React.useEffect(() => {
-        if (!data?.hasMore) return;
-        const total = data.total || data.stars.length;
-        const needed = Math.min(total, (revealTier + 1) * 600);
-        if (data.stars.length < needed) loadMore();
-      }, [revealTier, data, tierCount]);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
@@ -1279,9 +1190,7 @@ void main() {
           active,
           width,
           height,
-          false,
           data?.total || active.length,
-          revealTier,
         );
         const scatterState = layoutRef.current;
         scatterState.positions = scatterInitial;
@@ -1405,50 +1314,24 @@ void main() {
             state.url = null;
           }
         };
-      }, [data, size.width, size.height, settings?.viewMode, revealTier]);
+      }, [data, size.width, size.height]);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
-        const viewMode = '2d';
-        const canSwitch = maps.length > 1;
-        if (!canvas) return undefined;
-        const switchMap = (deltaY) => {
+        if (!canvas || maps.length < 2) return undefined;
+        const onWheel = (event) => {
+          event.preventDefault();
           const index = maps.findIndex((map) => map.id === activeId);
           if (index < 0) return;
-          const next = maps[(index + (deltaY > 0 ? 1 : -1) + maps.length) % maps.length];
+          const next = maps[(index + (event.deltaY > 0 ? 1 : -1) + maps.length) % maps.length];
           if (next) {
             setActiveId(next.id);
             setMapToast(next.name);
           }
         };
-        const onWheel = (event) => {
-          event.preventDefault();
-          if (event.ctrlKey && canSwitch) {
-            switchMap(event.deltaY);
-            return;
-          }
-          if (viewMode !== '2d') {
-            glRef.current.renderer?.zoom?.(event.deltaY);
-            const level = glRef.current.renderer?.getRevealLevel?.() ?? 0;
-            setRevealTier(Math.floor(level * Math.max(0, tierCount - 1)));
-            drawRef.current?.();
-            return;
-          }
-          const next = Math.max(
-            1,
-            Math.min(64, zoom2d * (event.deltaY > 0 ? 0.85 : 1.18)),
-          );
-          setZoom2d(next);
-          setRevealTier(
-            Math.min(
-              tierCount - 1,
-              Math.floor(((next - 1) / 63) * Math.max(0, tierCount - 1)),
-            ),
-          );
-        };
         canvas.addEventListener('wheel', onWheel, { passive: false });
         return () => canvas.removeEventListener('wheel', onWheel);
-      }, [immersive, maps, activeId, settings?.viewMode, zoom2d, tierCount]);
+      }, [maps, activeId]);
 
       React.useEffect(() => {
         if (!mapToast) return undefined;
@@ -1482,9 +1365,6 @@ void main() {
           const stored = layoutRef.current.positions;
           const stars = (data?.stars || []).filter((star) => {
             if (star.status !== 'active') return false;
-            const point = stored.get(star.id);
-            if (!point) return false;
-            if (point.tier > revealTier) return false;
             const queryText = query.trim().toLowerCase();
             if (!queryText) return true;
             const haystack = [star.title, star.fact, star.reason, star.condition, (star.tags || []).join(' ')]
@@ -1528,9 +1408,8 @@ void main() {
               dpr,
               positions,
               edgePairs,
-              mode === '2d' ? zoom2d : 1,
-              mode === '2d' ? pan2dRef.current.x : 0,
-              mode === '2d' ? pan2dRef.current.y : 0,
+              pan2dRef.current.x,
+              pan2dRef.current.y,
             );
             const displayPositions = projected || positions;
             positionsRef.current = displayPositions;
@@ -1651,7 +1530,7 @@ void main() {
           surface.fillText(emptyText, width / 2, height / 2);
           surface.textAlign = 'start';
         }
-      }, [data, selectedId, query, size, layoutVersion, settings?.viewMode, revealTier, zoom2d]);
+      }, [data, selectedId, query, size, layoutVersion]);
 
       React.useEffect(() => {
         if (settings?.viewMode === '2d') return undefined;
@@ -1679,21 +1558,8 @@ void main() {
       }, [autoRotate, settings?.viewMode]);
 
       React.useEffect(() => {
-        setRevealTier(0);
-        setZoom2d(1);
         pan2dRef.current = { x: 0, y: 0 };
-      }, [activeId, settings?.viewMode]);
-
-      React.useEffect(() => {
-        setRevealTier((current) => Math.min(current, Math.max(0, tierCount - 1)));
-      }, [tierCount]);
-
-      React.useEffect(() => {
-        if (glRef.current.renderer?.reset) {
-          glRef.current.renderer.reset();
-          drawRef.current?.();
-        }
-      }, [settings?.viewMode]);
+      }, [activeId]);
 
       function handlePointerDown(event) {
         if (event.button !== 0) return;
@@ -1798,13 +1664,7 @@ void main() {
         setAutoRotate(false);
         glRef.current.renderer?.setAutoRotate?.(false);
         glRef.current.renderer?.focusItem?.(best, size.width, size.height);
-        syncRevealFromRenderer();
         drawRef.current?.();
-      }
-
-      function syncRevealFromRenderer() {
-        const level = glRef.current.renderer?.getRevealLevel?.() ?? 0;
-        setRevealTier(Math.floor(level * Math.max(0, tierCount - 1)));
       }
 
       function focusSelected() {
@@ -1813,7 +1673,6 @@ void main() {
         setAutoRotate(false);
         glRef.current.renderer?.setAutoRotate?.(false);
         glRef.current.renderer?.focusItem?.(item, size.width, size.height);
-        syncRevealFromRenderer();
         drawRef.current?.();
       }
 
@@ -1839,14 +1698,12 @@ void main() {
         if (key === '+' || key === '=') {
           event.preventDefault();
           renderer.zoom(-1);
-          syncRevealFromRenderer();
           drawRef.current?.();
           return;
         }
         if (key === '-' || key === '_') {
           event.preventDefault();
           renderer.zoom(1);
-          syncRevealFromRenderer();
           drawRef.current?.();
           return;
         }
@@ -1854,8 +1711,6 @@ void main() {
           event.preventDefault();
           renderer.reset?.();
           setAutoRotate(true);
-          setRevealTier(0);
-          setZoom2d(1);
           drawRef.current?.();
           return;
         }
@@ -2464,11 +2319,7 @@ void main() {
                 zIndex: 4,
               },
             },
-            `${
-              settings?.viewMode === '2d'
-                ? `拖动平移 · 滚轮放大 ${zoom2d.toFixed(1)}×`
-                : '拖动/方向键旋转 · 无限缩放 · 双击聚焦'
-            } · 逐步显示 ${Math.min(revealTier + 1, tierCount)}/${tierCount} 层 · Ctrl+滚轮切图`,
+            '拖动平移 · 所有星散布在画布内外 · 滚轮切图',
           ),
           settings?.viewMode !== '2d'
             ? h(
@@ -2512,8 +2363,6 @@ void main() {
                     onClick: () => {
                       glRef.current.renderer?.reset?.();
                       setAutoRotate(true);
-                      setRevealTier(0);
-                      setZoom2d(1);
                       drawRef.current?.();
                     },
                     style: {
@@ -2572,8 +2421,6 @@ void main() {
                     type: 'button',
                     onClick: () => {
                       pan2dRef.current = { x: 0, y: 0 };
-                      setZoom2d(1);
-                      setRevealTier(0);
                       drawRef.current?.();
                     },
                     style: {
@@ -2588,11 +2435,6 @@ void main() {
                     },
                   },
                   '重置视图',
-                ),
-                h(
-                  'span',
-                  { style: { fontSize: '10px', opacity: 0.55 } },
-                  `${zoom2d.toFixed(1)}×`,
                 ),
               )
             : null,

@@ -1583,6 +1583,10 @@ export function apply(ctx) {
               stars: page,
               edges,
               constellations: offset === 0 ? data.constellations || [] : [],
+              inactive:
+                offset === 0
+                  ? data.stars.filter((star) => star.status !== 'active')
+                  : [],
               total,
               offset,
               limit,
