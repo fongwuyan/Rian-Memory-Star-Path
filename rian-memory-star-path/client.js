@@ -16,6 +16,11 @@ window.__ModuleLoader__.load({
         accent: '#7FD8FF',
         warn: '#FFD479',
         violet: '#B98CFF',
+        glass: 'rgba(16,22,47,0.82)',
+        vignette: 'rgba(3,6,18,0.55)',
+        nebula1: 'rgba(90,70,200,0.28)',
+        nebula2: 'rgba(20,120,180,0.2)',
+        nebula3: 'rgba(255,120,200,0.1)',
       },
       light: {
         bg: '#F4F6FB',
@@ -27,6 +32,11 @@ window.__ModuleLoader__.load({
         accent: '#0B63CE',
         warn: '#8A5A00',
         violet: '#6533B7',
+        glass: 'rgba(255,255,255,0.82)',
+        vignette: 'rgba(20,30,60,0.16)',
+        nebula1: 'rgba(120,140,255,0.18)',
+        nebula2: 'rgba(80,200,220,0.14)',
+        nebula3: 'rgba(255,160,220,0.12)',
       },
     };
 
@@ -43,6 +53,11 @@ window.__ModuleLoader__.load({
       root.style.setProperty('--ms-accent', theme.accent);
       root.style.setProperty('--ms-warn', theme.warn);
       root.style.setProperty('--ms-violet', theme.violet);
+      root.style.setProperty('--ms-panel-glass', theme.glass);
+      root.style.setProperty('--ms-vignette', theme.vignette);
+      root.style.setProperty('--ms-nebula-1', theme.nebula1);
+      root.style.setProperty('--ms-nebula-2', theme.nebula2);
+      root.style.setProperty('--ms-nebula-3', theme.nebula3);
     }
 
     applyTheme('dark');
@@ -662,9 +677,9 @@ void main() {
           if (!item) return;
           const minDim = Math.max(1, Math.min(width, height));
           camera.target = [
-            (item.x - width / 2) / minDim,
-            -(item.y - height / 2) / minDim,
-            (item.z || 0) / minDim,
+            ((item.worldX ?? item.x) - width / 2) / minDim,
+            -((item.worldY ?? item.y) - height / 2) / minDim,
+            (item.worldZ ?? item.z ?? 0) / minDim,
           ];
           camera.distance = 2;
           camera.velocityYaw = 0;
@@ -788,6 +803,9 @@ void main() {
                 ...item,
                 x: point.sx,
                 y: point.sy,
+                worldX: item.x,
+                worldY: item.y,
+                worldZ: item.z,
                 depth: point.depth,
                 visible: point.visible,
               });
@@ -1888,11 +1906,15 @@ void main() {
         color: id === activeId ? '#0B1026' : 'var(--ms-text)',
         background: id === activeId ? '#FFD479' : 'var(--ms-subtle)',
         whiteSpace: 'nowrap',
+        transition: 'transform .18s ease, background .18s ease, box-shadow .18s ease',
+        boxShadow:
+          id === activeId ? '0 0 18px rgba(255,212,121,0.28)' : '0 0 0 rgba(0,0,0,0)',
       });
 
       return h(
         'div',
         {
+          className: 'ms-shell',
           style: {
             display: 'flex',
             flexDirection: 'column',
@@ -1906,6 +1928,32 @@ void main() {
           },
         },
         h(
+          'style',
+          null,
+          `
+.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;background:radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
+.ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(200,220,255,.45) 1px,transparent 1px),radial-gradient(circle,rgba(255,255,255,.28) 1px,transparent 1px);background-size:97px 97px,151px 151px;background-position:0 0,40px 60px;opacity:.35}
+.ms-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;background:radial-gradient(circle at 50% 45%,transparent 38%,var(--ms-vignette) 100%)}
+.ms-glass{backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12)}
+.ms-btn{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
+.ms-btn:hover{transform:translateY(-1px);filter:brightness(1.08);box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.ms-btn:active{transform:translateY(0) scale(.985)}
+.ms-scroll{scrollbar-width:thin;scrollbar-color:var(--ms-border) transparent}
+.ms-scroll::-webkit-scrollbar{width:6px;height:6px}
+.ms-scroll::-webkit-scrollbar-thumb{background:var(--ms-border);border-radius:999px}
+.ms-tooltip{animation:ms-fade .16s ease-out}
+.ms-shell button{border:1px solid var(--ms-border);background:var(--ms-subtle);color:var(--ms-text);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;transition:filter .18s ease,background .18s ease,box-shadow .18s ease}
+.ms-shell button:hover{filter:brightness(1.08);box-shadow:0 4px 14px rgba(0,0,0,.14)}
+.ms-shell button:disabled{opacity:.4;cursor:default;box-shadow:none}
+.ms-shell button:focus-visible{outline:2px solid var(--ms-accent);outline-offset:2px}
+.ms-shell input,.ms-shell select{background:var(--ms-subtle);color:var(--ms-text);border:1px solid var(--ms-border);border-radius:8px;padding:5px 8px;font:inherit;outline:none}
+.ms-shell input:focus,.ms-shell select:focus{border-color:var(--ms-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ms-accent) 18%,transparent)}
+.ms-shell ::selection{background:color-mix(in srgb,var(--ms-accent) 35%,transparent);color:var(--ms-text)}
+@keyframes ms-drift{from{transform:translate3d(-2%,-1%,0) scale(1.04)}to{transform:translate3d(2%,1%,0) scale(1.12)}}
+@keyframes ms-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+`,
+        ),
+        h(
           'div',
           {
             style: {
@@ -1915,6 +1963,8 @@ void main() {
               padding: '10px 12px',
               borderBottom: '1px solid var(--ms-border)',
               flexWrap: 'wrap',
+              background: 'linear-gradient(180deg, var(--ms-subtle), transparent)',
+              backdropFilter: 'blur(12px)',
             },
           },
           h('strong', { style: { fontSize: '13px', marginRight: '4px' } }, '✦ 雨咯记忆星'),
@@ -2053,6 +2103,7 @@ void main() {
         h(
           'div',
           { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' } },
+          h('div', { className: 'ms-nebula', 'aria-hidden': true }),
           h('canvas', {
             ref: canvasRef,
             tabIndex: 0,
@@ -2068,8 +2119,13 @@ void main() {
               display: 'block',
               width: '100%',
               height: '100%',
+              position: 'relative',
+              zIndex: 1,
               cursor: settings?.viewMode === '2d' ? (immersive ? 'default' : 'crosshair') : 'grab',
-              background: 'linear-gradient(135deg, #0B1026, #131A3A)',
+              background:
+                settings?.viewMode === '2d'
+                  ? 'linear-gradient(135deg, #0B1026, #131A3A)'
+                  : 'transparent',
               outline: 'none',
             },
           }),
@@ -2083,8 +2139,10 @@ void main() {
               width: '100%',
               height: '100%',
               pointerEvents: 'none',
+              zIndex: 2,
             },
           }),
+          h('div', { className: 'ms-vignette', 'aria-hidden': true }),
           settings?.viewMode !== '2d'
             ? h(
                 'div',
@@ -2096,6 +2154,7 @@ void main() {
                     fontSize: '10px',
                     opacity: 0.45,
                     pointerEvents: 'none',
+                    zIndex: 4,
                   },
                 },
                 '拖动/方向键旋转 · 滚轮缩放 · Ctrl+滚轮切图 · 双击聚焦',
@@ -2192,6 +2251,7 @@ void main() {
             ? h(
                 'div',
                 {
+                  className: 'ms-tooltip',
                   style: {
                     position: 'absolute',
                     left: Math.min(hovered.x + 14, Math.max(12, size.width - 230)),
@@ -2204,7 +2264,7 @@ void main() {
                     color: 'var(--ms-text)',
                     fontSize: '11px',
                     pointerEvents: 'none',
-                    zIndex: 5,
+                    zIndex: 8,
                     boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
                   },
                 },
@@ -2225,9 +2285,10 @@ void main() {
                     top: '16px',
                     left: '50%',
                     transform: 'translateX(-50%)',
+                    zIndex: 5,
                     padding: '4px 12px',
                     borderRadius: '999px',
-                    background: 'rgba(12,17,38,0.82)',
+                    background: 'var(--ms-panel-glass)',
                     border: '1px solid var(--ms-border)',
                     fontSize: '12px',
                     pointerEvents: 'none',
@@ -2266,6 +2327,7 @@ void main() {
             ? h(
                 'div',
                 {
+                  className: 'ms-glass ms-scroll',
                   style: {
                     position: 'absolute',
                     top: '12px',
@@ -2277,7 +2339,7 @@ void main() {
                     padding: '10px',
                     borderRadius: '12px',
                     border: '1px solid var(--ms-border)',
-                    background: 'rgba(12,17,38,0.97)',
+                    background: 'var(--ms-panel-glass)',
                     boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
                     fontSize: '12px',
                   },
@@ -2349,17 +2411,19 @@ void main() {
             ? h(
                 'aside',
                 {
+                  className: 'ms-glass ms-scroll',
                   style: {
                     position: 'absolute',
                     top: '12px',
                     right: '12px',
                     width: '286px',
+                    zIndex: 6,
                     maxHeight: 'calc(100% - 24px)',
                     overflow: 'auto',
                     padding: '14px',
                     borderRadius: '12px',
                     border: '1px solid var(--ms-border)',
-                    background: 'rgba(12,17,38,0.94)',
+                    background: 'var(--ms-panel-glass)',
                     boxShadow: '0 18px 40px rgba(0,0,0,0.35)',
                     fontSize: '12px',
                     lineHeight: 1.55,
@@ -2624,17 +2688,19 @@ void main() {
             ? h(
                 'aside',
                 {
+                  className: 'ms-glass ms-scroll',
                   style: {
                     position: 'absolute',
                     top: '12px',
                     right: '12px',
                     width: '320px',
+                    zIndex: 6,
                     maxHeight: 'calc(100% - 24px)',
                     overflow: 'auto',
                     padding: '14px',
                     borderRadius: '12px',
                     border: '1px solid rgba(255,212,121,0.28)',
-                    background: 'rgba(12,17,38,0.96)',
+                    background: 'var(--ms-panel-glass)',
                     boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
                     fontSize: '12px',
                     lineHeight: 1.5,
@@ -3377,12 +3443,13 @@ void main() {
               h(
                 'div',
                 {
+                  className: 'ms-glass',
                   style: {
                     width: 'min(520px, 100%)',
                     padding: '24px',
                     borderRadius: '16px',
                     border: '1px solid var(--ms-border)',
-                    background: 'rgba(14,20,44,0.98)',
+                    background: 'var(--ms-panel-glass)',
                     boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
                     color: 'var(--ms-text)',
                   },
@@ -3651,7 +3718,7 @@ void main() {
 
       return h(
         'div',
-        { style: { padding: '20px 24px', maxWidth: '760px', minHeight: '100%', background: 'var(--ms-bg)', color: 'var(--ms-text)', colorScheme: settings?.theme === 'light' ? 'light' : 'dark' } },
+        { className: 'ms-shell', style: { padding: '20px 24px', maxWidth: '760px', minHeight: '100%', background: 'var(--ms-bg)', color: 'var(--ms-text)', colorScheme: settings?.theme === 'light' ? 'light' : 'dark' } },
         h('h2', { style: { margin: '0 0 4px', fontSize: '18px' } }, '雨咯记忆星'),
         h(
           'p',
