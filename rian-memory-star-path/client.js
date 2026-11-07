@@ -69,40 +69,80 @@ window.__ModuleLoader__.load({
       return x - Math.floor(x);
     }
 
-    const layoutCellCache = new Map();
+    const scatterPointsCache = new Map();
+
+    function mulberry32(seed) {
+      let value = seed >>> 0;
+      return function random() {
+        value = (value + 0x6d2b79f5) | 0;
+        let next = Math.imul(value ^ (value >>> 15), 1 | value);
+        next = (next + Math.imul(next ^ (next >>> 7), 61 | next)) ^ next;
+        return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function poissonPoints(count, width, height) {
+      if (!count) return [];
+      const aspect = width / height;
+      const baseArea = width * height * 1.44;
+      const area = Math.max(baseArea, (count * 24 * 24) / 0.22);
+      const worldWidth = Math.max(Math.sqrt(area * aspect), width * 1.2);
+      const worldHeight = Math.max(Math.sqrt(area / aspect), height * 1.2);
+      const minDistance = Math.max(
+        20,
+        Math.sqrt((worldWidth * worldHeight * 0.22) / count),
+      );
+      const points = [];
+      const random = mulberry32(
+        (Math.imul(count, 2654435761) ^ Math.imul(width, 31) ^ height) >>> 0,
+      );
+      const cell = minDistance / Math.SQRT2;
+      const gridCols = Math.max(1, Math.ceil(worldWidth / cell));
+      const gridRows = Math.max(1, Math.ceil(worldHeight / cell));
+      const grid2 = new Int32Array(gridCols * gridRows);
+      const fits = (x, y) => {
+        const col = Math.floor(x / cell);
+        const row = Math.floor(y / cell);
+        for (let r = Math.max(0, row - 2); r <= Math.min(gridRows - 1, row + 2); r += 1) {
+          for (let c = Math.max(0, col - 2); c <= Math.min(gridCols - 1, col + 2); c += 1) {
+            const index = grid2[r * gridCols + c];
+            if (!index) continue;
+            const other = points[index - 1];
+            if (Math.hypot(other[0] - x, other[1] - y) < minDistance) return false;
+          }
+        }
+        return true;
+      };
+      const attempts = count * 40;
+      for (let attempt = 0; attempt < attempts && points.length < count; attempt += 1) {
+        const x = random() * worldWidth;
+        const y = random() * worldHeight;
+        if (!fits(x, y)) continue;
+        points.push([x, y]);
+        grid2[
+          Math.floor(y / cell) * gridCols + Math.floor(x / cell)
+        ] = points.length;
+      }
+      const left = (width - worldWidth) / 2;
+      const top = (height - worldHeight) / 2;
+      return points.map(([x, y]) => ({
+        x: x + left,
+        y: y + top,
+        distance: Math.hypot(x - worldWidth / 2, y - worldHeight / 2),
+      }));
+    }
 
     function buildScatterLayout(stars, width, height, totalCount) {
       const total = Math.max(stars.length, Number(totalCount) || stars.length);
       if (!total) return new Map();
       const cacheKey = `${total}:${width}:${height}`;
-      let cached = layoutCellCache.get(cacheKey);
-      if (!cached) {
-        const cols = Math.max(1, Math.ceil(Math.sqrt(total * 1.2)));
-        const rows = Math.max(1, Math.ceil(total / cols));
-        const room = Math.max(width, height) * 1.2;
-        const cell = Math.max(24, room / Math.max(cols, rows));
-        const worldWidth = cols * cell;
-        const worldHeight = rows * cell;
-        const left = (width - worldWidth) / 2;
-        const top = (height - worldHeight) / 2;
-        const cells = [];
-        for (let row = 0; row < rows; row += 1) {
-          for (let col = 0; col < cols; col += 1) {
-            const x = left + (col + 0.5) * cell;
-            const y = top + (row + 0.5) * cell;
-            cells.push({
-              x,
-              y,
-              distance: Math.hypot(x - width / 2, y - height / 2),
-            });
-          }
-        }
-        cells.sort((a, b) => b.distance - a.distance);
-        cached = { cells, cell };
-        if (layoutCellCache.size > 6) {
-          layoutCellCache.clear();
-        }
-        layoutCellCache.set(cacheKey, cached);
+      let slots = scatterPointsCache.get(cacheKey);
+      if (!slots) {
+        slots = poissonPoints(total, width, height).sort(
+          (a, b) => b.distance - a.distance,
+        );
+        if (scatterPointsCache.size > 6) scatterPointsCache.clear();
+        scatterPointsCache.set(cacheKey, slots);
       }
       const ranked = stars
         .map((star) => ({
@@ -111,15 +151,12 @@ window.__ModuleLoader__.load({
         }))
         .sort((a, b) => b.weight - a.weight);
       const positions = new Map();
-      const cell = cached.cell;
       ranked.forEach((entry, rank) => {
-        const slot = cached.cells[rank];
+        const slot = slots[rank];
         if (!slot) return;
-        const jitterX = (hash01(rank * 5 + 1) - 0.5) * cell * 0.3;
-        const jitterY = (hash01(rank * 5 + 4) - 0.5) * cell * 0.3;
         positions.set(entry.star.id, {
-          x: slot.x + jitterX,
-          y: slot.y + jitterY,
+          x: slot.x,
+          y: slot.y,
           z: 0,
         });
       });
