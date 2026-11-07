@@ -4,7 +4,7 @@
 
 这是一个 **DSH Cordis 插件 bundle**，不是独立应用。它通过 `memory_*` 工具让模型读写记忆，并在 DSH 侧边栏与设置页提供星图界面。
 
-- 版本：`0.2.0`
+- 版本：`0.0.1`
 - 仓库：<https://github.com/fongwuyan/Rian-Memory-Star-Path>
 - 设计文档：[docs/rian-memory-star-path.design.md](docs/rian-memory-star-path.design.md)
 
@@ -12,6 +12,7 @@
 
 - **公共图 + 项目图**：公共星图始终参与召回；每个会话可额外绑定一张项目图，或只用公共图。
 - **记忆工具**：`memory_search` / `memory_save` / `memory_link` / `memory_forget`。
+- **重复抑制**：同一颗星默认 3 回合内不重复注入，可在设置关闭。
 - **星尘历史**：字段级变更、最多 50 版、按版本恢复，恢复本身也可回退。
 - **备份与导入**：JSON / zip 导出（含历史）；导入预览同名星图，支持新建副本、合并到现有或取消。
 - **自动备份**：启动时生成 zip，保留最近 5 份。
@@ -179,7 +180,7 @@ $env:DSH_MEMORY_API = "http://127.0.0.1:51107/plugins/rian-memory-star-path/api-
 
 ### 版本
 
-当前 `0.2.0`。版本号同时出现在：
+当前 `0.0.1`。版本号同时出现在：
 
 - `package.json`
 - `index.js` 的 `PLUGIN_VERSION`

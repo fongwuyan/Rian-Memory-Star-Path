@@ -2722,6 +2722,18 @@ void main() {
           }),
         ),
         field(
+          '重复抑制回合数',
+          h('input', {
+            type: 'number',
+            min: 0,
+            max: 10,
+            value: settings.repeatSuppressionTurns ?? 3,
+            onChange: (event) =>
+              update({ repeatSuppressionTurns: Number(event.target.value) }),
+            style: { padding: '6px 8px', borderRadius: '8px', width: '90px' },
+          }),
+        ),
+        field(
           '注入预算（token）',
           h('input', {
             type: 'number',
@@ -3010,7 +3022,7 @@ void main() {
             h(
               'div',
               null,
-              `版本 ${health?.version || '0.2.0'} · schema ${health?.schemaVersion || 1}`,
+              `版本 ${health?.version || '0.0.1'} · schema ${health?.schemaVersion || 1}`,
             ),
             h('div', null, `${health?.maps || 0} 张图 · ${health?.stars || 0} 颗星`),
             h('div', null, '导出备份前建议先确认数据目录。'),

@@ -53,6 +53,7 @@ const DEFAULT_SETTINGS = {
   rain: 'light',
   halfLifeDays: 45,
   directActiveConfidence: 0.85,
+  repeatSuppressionTurns: 3,
   privacyMode: 'standard',
   customSensitiveWords: [],
   privacyIncognito: false,
@@ -83,7 +84,7 @@ function detectSensitive(text, mode = 'standard', customWords = []) {
   return null;
 }
 
-const PLUGIN_VERSION = '0.2.0';
+const PLUGIN_VERSION = '0.0.1';
 let HALF_LIFE_DAYS = 45;
 
 function nowIso() {
@@ -218,6 +219,7 @@ export function apply(ctx) {
   const bindings = new Map();
   const recallCache = new Map();
   const turnTrace = new Map();
+  const recentRecalls = new Map();
   const saveTimers = new Map();
   const indexCache = new Map();
   const dirtyIndex = new Set();
@@ -804,6 +806,26 @@ export function apply(ctx) {
     return `〔${map.name}〕${TYPE_LABEL[star.type] || star.type}：${star.title}。${star.fact}${condition}`;
   }
 
+  function isRecallSuppressed(sessionId, starId, turn) {
+    const limit = Number(settings.repeatSuppressionTurns ?? 3);
+    if (!sessionId || !turn || limit <= 0) return false;
+    const last = recentRecalls.get(sessionId)?.get(starId);
+    return Number.isFinite(last) && turn > last && turn - last <= limit;
+  }
+
+  function noteRecalls(sessionId, turn, starIds) {
+    if (!sessionId || !turn || !Array.isArray(starIds) || !starIds.length) return;
+    let recent = recentRecalls.get(sessionId);
+    if (!recent) {
+      recent = new Map();
+      recentRecalls.set(sessionId, recent);
+    }
+    for (const id of starIds) recent.set(id, turn);
+    for (const [id, last] of recent) {
+      if (turn - last > 100) recent.delete(id);
+    }
+  }
+
   function recordTurn(sessionId, turn, field, amount = 1) {
     if (!sessionId || !turn) return;
     let perSession = turnTrace.get(sessionId);
@@ -820,13 +842,16 @@ export function apply(ctx) {
     }
   }
 
-  function recallForAgent(agent, mapId, query) {
+  function recallForAgent(agent, mapId, query, turn = 0) {
     if (settings.privacyIncognito) return { text: '', count: 0, starIds: [] };
     if (isSessionMuted(agent)) return { text: '', count: 0, starIds: [] };
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
       return { text: '', count: 0, starIds: [] };
     }
-    const hits = searchInternal(agent, mapId, query, settings.topK);
+    const topK = Math.max(1, Number(settings.topK) || 6);
+    const hits = searchInternal(agent, mapId, query, Math.min(50, topK * 3))
+      .filter((hit) => !isRecallSuppressed(agent?.id, hit.star.id, turn))
+      .slice(0, topK);
     if (!hits.length) return { text: '', count: 0, starIds: [] };
     const lines = [];
     const touched = new Set();
@@ -845,6 +870,7 @@ export function apply(ctx) {
       hit.star.updatedAt = hit.star.updatedAt || nowIso();
       touched.add(hit.star.mapId);
     }
+    noteRecalls(agent?.id, turn, starIds);
     for (const id of touched) scheduleMapSave(id);
     return {
       text: [
@@ -858,7 +884,7 @@ export function apply(ctx) {
     };
   }
 
-  function briefForAgent(agent, mapId) {
+  function briefForAgent(agent, mapId, turn = 0) {
     if (settings.privacyIncognito) return { text: '', count: 0, starIds: [] };
     if (isSessionMuted(agent)) return { text: '', count: 0, starIds: [] };
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
@@ -869,7 +895,10 @@ export function apply(ctx) {
     const publicData = maps.get(index.publicMapId);
     if (publicData) {
       const publicStars = publicData.stars
-        .filter((star) => star.status === 'active')
+        .filter(
+          (star) =>
+            star.status === 'active' && !isRecallSuppressed(agent?.id, star.id, turn),
+        )
         .sort((a, b) => weightOf(b, at) - weightOf(a, at))
         .slice(0, 2);
       for (const star of publicStars) picked.push({ star, map: publicData.map });
@@ -877,7 +906,10 @@ export function apply(ctx) {
     const projectData = maps.get(mapId);
     if (projectData && mapId !== index.publicMapId) {
       const projectStars = projectData.stars
-        .filter((star) => star.status === 'active')
+        .filter(
+          (star) =>
+            star.status === 'active' && !isRecallSuppressed(agent?.id, star.id, turn),
+        )
         .sort((a, b) => {
           const ap = a.pinned ? 1 : 0;
           const bp = b.pinned ? 1 : 0;
@@ -897,6 +929,7 @@ export function apply(ctx) {
       starIds.push(star.id);
       lines.push(starLine(star, map));
     }
+    noteRecalls(agent?.id, turn, starIds);
     return {
       text: [
         '<long-term-memory>',
@@ -1365,10 +1398,10 @@ export function apply(ctx) {
         const isFirst = payload.turn === 1 && payload.step === 1;
         let result;
         if (isFirst) {
-          result = briefForAgent(agent, mapId);
-          if (!result.text) result = recallForAgent(agent, mapId, query);
+          result = briefForAgent(agent, mapId, payload.turn);
+          if (!result.text) result = recallForAgent(agent, mapId, query, payload.turn);
         } else {
-          result = recallForAgent(agent, mapId, query);
+          result = recallForAgent(agent, mapId, query, payload.turn);
         }
         recallCache.set(agent.id, result.text);
         if (result.count) recordTurn(agent.id, payload.turn, 'recalled', result.count);
@@ -1379,7 +1412,10 @@ export function apply(ctx) {
     });
 
     ctx.on('agent/disposed', (payload) => {
-      if (payload?.agent?.id) recallCache.delete(payload.agent.id);
+      if (payload?.agent?.id) {
+        recallCache.delete(payload.agent.id);
+        recentRecalls.delete(payload.agent.id);
+      }
     });
   }
 

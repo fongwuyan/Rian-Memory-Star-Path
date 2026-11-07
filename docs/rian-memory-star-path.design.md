@@ -1184,7 +1184,7 @@ POST  /plugins/rian-memory-star/api/maps
 
 ---
 
-## 15. 实现状态（v0.2.x）
+## 15. 实现状态（v0.0.x）
 
 已实现：
 
