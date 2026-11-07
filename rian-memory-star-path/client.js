@@ -360,6 +360,8 @@ function run() {
 }
 `;
 
+    const STAR_POINT_SIZE = 12;
+
     function createWebGLRenderer(canvas) {
       const gl = canvas.getContext('webgl2', {
         alpha: true,
@@ -512,20 +514,15 @@ void main() {
           }
 
           const count = positions.length;
-          const heavy = count > 20000;
           if (count) {
             const positionData = new Float32Array(count * 2);
             const sizeData = new Float32Array(count);
             const colorData = new Float32Array(count * 3);
             positions.forEach((item, index) => {
-              const weight = heavy ? 0.5 : weightOf(item.star);
-              const radius = heavy
-                ? 2.2 + 3 * Number(item.star.importance ?? 0.5)
-                : 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
               const point = project(item.x, item.y);
               positionData[index * 2] = point.x * dpr;
               positionData[index * 2 + 1] = point.y * dpr;
-              sizeData[index] = Math.max(2, radius * 2 * dpr);
+              sizeData[index] = STAR_POINT_SIZE * dpr;
               const rgb = hexToRgb(TYPE_COLOR[item.star.type] || '#CFE3FF');
               colorData[index * 3] = rgb[0];
               colorData[index * 3 + 1] = rgb[1];
@@ -1028,7 +1025,7 @@ void main() {
       for (const item of positions) {
         if (item.visible === false) continue;
         const weight = dense ? 0.5 : weightOf(item.star);
-        const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
+        const radius = STAR_POINT_SIZE / 2;
         if (item.star.id === selectedId) {
           surface.strokeStyle = '#FFD479';
           surface.lineWidth = 2;
@@ -1533,7 +1530,7 @@ void main() {
 
         for (const item of positions) {
           const weight = weightOf(item.star);
-          const radiusStar = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
+          const radiusStar = STAR_POINT_SIZE / 2;
           const color = TYPE_COLOR[item.star.type] || '#CFE3FF';
           surface.save();
           surface.shadowColor = color;
