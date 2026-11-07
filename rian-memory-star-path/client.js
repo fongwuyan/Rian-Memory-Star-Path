@@ -47,6 +47,17 @@ window.__ModuleLoader__.load({
 
     applyTheme('dark');
 
+    function starDepth(star, width, height) {
+      const id = String(star?.id || star?.title || '');
+      let hash = 2166136261;
+      for (let index = 0; index < id.length; index += 1) {
+        hash ^= id.charCodeAt(index);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      const unit = (hash % 10000) / 10000;
+      return (unit - 0.5) * Math.min(width, height) * 0.5;
+    }
+
     const TYPE_COLOR = {
       fact: '#CFE3FF',
       preference: '#FFD479',
@@ -409,6 +420,315 @@ void main() {
       };
     }
 
+    function createWebGLRenderer3D(canvas) {
+      const gl = canvas.getContext('webgl2', {
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: false,
+      });
+      if (!gl) return null;
+
+      const starVS = `#version 300 es
+in vec3 a_position;
+in float a_size;
+in vec3 a_color;
+uniform mat4 u_viewProjection;
+uniform float u_dpr;
+out vec3 v_color;
+out float v_alpha;
+void main() {
+  vec4 clip = u_viewProjection * vec4(a_position, 1.0);
+  gl_Position = clip;
+  float depth = max(0.2, clip.w);
+  gl_PointSize = clamp(a_size * u_dpr * (1.8 / depth), 1.0, 48.0);
+  v_color = a_color;
+  v_alpha = clamp(1.8 / depth, 0.2, 1.0);
+}`;
+
+      const starFS = `#version 300 es
+precision mediump float;
+in vec3 v_color;
+in float v_alpha;
+out vec4 out_color;
+void main() {
+  vec2 uv = gl_PointCoord * 2.0 - 1.0;
+  float d = length(uv);
+  if (d > 1.0) discard;
+  float core = smoothstep(1.0, 0.0, d);
+  float glow = pow(core, 2.0);
+  out_color = vec4(v_color, clamp(core * 0.92 + glow * 0.32, 0.0, 1.0) * v_alpha);
+}`;
+
+      const lineVS = `#version 300 es
+in vec3 a_position;
+uniform mat4 u_viewProjection;
+void main() {
+  gl_Position = u_viewProjection * vec4(a_position, 1.0);
+}`;
+
+      const lineFS = `#version 300 es
+precision mediump float;
+uniform vec4 u_color;
+out vec4 out_color;
+void main() {
+  out_color = u_color;
+}`;
+
+      function compile(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error('[memory-star] 3d shader error', gl.getShaderInfoLog(shader));
+          gl.deleteShader(shader);
+          return null;
+        }
+        return shader;
+      }
+
+      function createProgram(vsSource, fsSource) {
+        const vs = compile(gl.VERTEX_SHADER, vsSource);
+        const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+        if (!vs || !fs) return null;
+        const program = gl.createProgram();
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.deleteShader(vs);
+        gl.deleteShader(fs);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          console.error('[memory-star] 3d program error', gl.getProgramInfoLog(program));
+          gl.deleteProgram(program);
+          return null;
+        }
+        return program;
+      }
+
+      const starProgram = createProgram(starVS, starFS);
+      const lineProgram = createProgram(lineVS, lineFS);
+      if (!starProgram || !lineProgram) return null;
+
+      const starVao = gl.createVertexArray();
+      const starPosBuffer = gl.createBuffer();
+      const starSizeBuffer = gl.createBuffer();
+      const starColorBuffer = gl.createBuffer();
+      gl.bindVertexArray(starVao);
+      const starPosLoc = gl.getAttribLocation(starProgram, 'a_position');
+      const starSizeLoc = gl.getAttribLocation(starProgram, 'a_size');
+      const starColorLoc = gl.getAttribLocation(starProgram, 'a_color');
+      gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
+      gl.enableVertexAttribArray(starPosLoc);
+      gl.vertexAttribPointer(starPosLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, starSizeBuffer);
+      gl.enableVertexAttribArray(starSizeLoc);
+      gl.vertexAttribPointer(starSizeLoc, 1, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
+      gl.enableVertexAttribArray(starColorLoc);
+      gl.vertexAttribPointer(starColorLoc, 3, gl.FLOAT, false, 0, 0);
+
+      const lineVao = gl.createVertexArray();
+      const lineBuffer = gl.createBuffer();
+      gl.bindVertexArray(lineVao);
+      const linePosLoc = gl.getAttribLocation(lineProgram, 'a_position');
+      gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+      gl.enableVertexAttribArray(linePosLoc);
+      gl.vertexAttribPointer(linePosLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+
+      const starVpLoc = gl.getUniformLocation(starProgram, 'u_viewProjection');
+      const starDprLoc = gl.getUniformLocation(starProgram, 'u_dpr');
+      const lineVpLoc = gl.getUniformLocation(lineProgram, 'u_viewProjection');
+      const lineColorLoc = gl.getUniformLocation(lineProgram, 'u_color');
+
+      const camera = { yaw: 0.55, pitch: -0.28, distance: 3.1 };
+
+      function perspective(fovy, aspect, near, far) {
+        const f = 1 / Math.tan(fovy / 2);
+        return new Float32Array([
+          f / aspect, 0, 0, 0,
+          0, f, 0, 0,
+          0, 0, (far + near) / (near - far), -1,
+          0, 0, (2 * far * near) / (near - far), 0,
+        ]);
+      }
+
+      function lookAt(eye, center, up) {
+        const zx = eye[0] - center[0];
+        const zy = eye[1] - center[1];
+        const zz = eye[2] - center[2];
+        const zl = Math.hypot(zx, zy, zz) || 1;
+        const z0 = zx / zl;
+        const z1 = zy / zl;
+        const z2 = zz / zl;
+        let x0 = up[1] * z2 - up[2] * z1;
+        let x1 = up[2] * z0 - up[0] * z2;
+        let x2 = up[0] * z1 - up[1] * z0;
+        const xl = Math.hypot(x0, x1, x2) || 1;
+        x0 /= xl;
+        x1 /= xl;
+        x2 /= xl;
+        const y0 = z1 * x2 - z2 * x1;
+        const y1 = z2 * x0 - z0 * x2;
+        const y2 = z0 * x1 - z1 * x0;
+        return new Float32Array([
+          x0, y0, z0, 0,
+          x1, y1, z1, 0,
+          x2, y2, z2, 0,
+          -(x0 * eye[0] + x1 * eye[1] + x2 * eye[2]),
+          -(y0 * eye[0] + y1 * eye[1] + y2 * eye[2]),
+          -(z0 * eye[0] + z1 * eye[1] + z2 * eye[2]),
+          1,
+        ]);
+      }
+
+      function multiply(a, b) {
+        const out = new Float32Array(16);
+        for (let column = 0; column < 4; column += 1) {
+          for (let row = 0; row < 4; row += 1) {
+            out[column * 4 + row] =
+              a[0 * 4 + row] * b[column * 4 + 0] +
+              a[1 * 4 + row] * b[column * 4 + 1] +
+              a[2 * 4 + row] * b[column * 4 + 2] +
+              a[3 * 4 + row] * b[column * 4 + 3];
+          }
+        }
+        return out;
+      }
+
+      return {
+        kind: '3d',
+        orbit(dx, dy) {
+          camera.yaw += dx * 0.008;
+          camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch + dy * 0.006));
+        },
+        zoom(delta) {
+          camera.distance = Math.max(
+            1.4,
+            Math.min(6, camera.distance * (delta > 0 ? 1.08 : 0.92)),
+          );
+        },
+        draw(width, height, dpr, positions, edges) {
+          const pixelWidth = Math.max(1, Math.floor(width * dpr));
+          const pixelHeight = Math.max(1, Math.floor(height * dpr));
+          if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+          if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+          gl.viewport(0, 0, pixelWidth, pixelHeight);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+          const minDim = Math.max(1, Math.min(width, height));
+          const cosPitch = Math.cos(camera.pitch);
+          const eye = [
+            Math.sin(camera.yaw) * cosPitch * camera.distance,
+            Math.sin(camera.pitch) * camera.distance,
+            Math.cos(camera.yaw) * cosPitch * camera.distance,
+          ];
+          const view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
+          const projection = perspective(Math.PI / 4, width / height, 0.1, 20);
+          const viewProjection = multiply(projection, view);
+          const project = (x, y, z) => {
+            const nx = (x - width / 2) / minDim;
+            const ny = -(y - height / 2) / minDim;
+            const nz = (z || 0) / minDim;
+            const clipX =
+              viewProjection[0] * nx +
+              viewProjection[4] * ny +
+              viewProjection[8] * nz +
+              viewProjection[12];
+            const clipY =
+              viewProjection[1] * nx +
+              viewProjection[5] * ny +
+              viewProjection[9] * nz +
+              viewProjection[13];
+            const clipZ =
+              viewProjection[2] * nx +
+              viewProjection[6] * ny +
+              viewProjection[10] * nz +
+              viewProjection[14];
+            const clipW =
+              viewProjection[3] * nx +
+              viewProjection[7] * ny +
+              viewProjection[11] * nz +
+              viewProjection[15];
+            const visible = clipW > 0.05;
+            return {
+              nx,
+              ny,
+              nz,
+              w: clipW,
+              depth: clipZ,
+              visible,
+              sx: visible ? (clipX / clipW * 0.5 + 0.5) * width : -9999,
+              sy: visible ? (0.5 - clipY / clipW * 0.5) * height : -9999,
+            };
+          };
+
+          if (edges.length) {
+            const lineValues = [];
+            for (const edge of edges) {
+              const from = project(edge.from.x, edge.from.y, edge.from.z);
+              const to = project(edge.to.x, edge.to.y, edge.to.z);
+              if (!from.visible || !to.visible) continue;
+              lineValues.push(from.nx, from.ny, from.nz, to.nx, to.ny, to.nz);
+            }
+            if (lineValues.length) {
+              const lineData = new Float32Array(lineValues);
+              gl.useProgram(lineProgram);
+              gl.uniformMatrix4fv(lineVpLoc, false, viewProjection);
+              gl.uniform4f(lineColorLoc, 0.72, 0.8, 1.0, 0.16);
+              gl.bindVertexArray(lineVao);
+              gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+              gl.bufferData(gl.ARRAY_BUFFER, lineData, gl.DYNAMIC_DRAW);
+              gl.drawArrays(gl.LINES, 0, lineValues.length / 3);
+            }
+          }
+
+          const count = positions.length;
+          if (count) {
+            const positionData = new Float32Array(count * 3);
+            const sizeData = new Float32Array(count);
+            const colorData = new Float32Array(count * 3);
+            const projected = [];
+            positions.forEach((item, index) => {
+              const point = project(item.x, item.y, item.z);
+              const weight = weightOf(item.star);
+              const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
+              positionData[index * 3] = point.nx;
+              positionData[index * 3 + 1] = point.ny;
+              positionData[index * 3 + 2] = point.nz;
+              sizeData[index] = point.visible ? Math.max(2, radius * 2) : 0;
+              const rgb = hexToRgb(TYPE_COLOR[item.star.type] || '#CFE3FF');
+              colorData[index * 3] = rgb[0];
+              colorData[index * 3 + 1] = rgb[1];
+              colorData[index * 3 + 2] = rgb[2];
+              projected.push({
+                ...item,
+                x: point.sx,
+                y: point.sy,
+                depth: point.depth,
+                visible: point.visible,
+              });
+            });
+            gl.useProgram(starProgram);
+            gl.uniformMatrix4fv(starVpLoc, false, viewProjection);
+            gl.uniform1f(starDprLoc, dpr);
+            gl.bindVertexArray(starVao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, positionData, gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, starSizeBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
+            gl.drawArrays(gl.POINTS, 0, count);
+            return projected;
+          }
+          return [];
+        },
+      };
+    }
+
     function drawLabels(canvas, width, height, dpr, positions, selectedId, emptyText, constellations) {
       if (!canvas) return;
       const pixelWidth = Math.max(1, Math.floor(width * dpr));
@@ -433,7 +753,7 @@ void main() {
       for (const [index, constellation] of (constellations || []).entries()) {
         const members = (constellation.starIds || [])
           .map((starId) => byId.get(starId))
-          .filter(Boolean);
+          .filter((member) => member && member.visible !== false);
         if (members.length < 2) continue;
         let minX = Infinity;
         let minY = Infinity;
@@ -470,6 +790,7 @@ void main() {
         surface.textAlign = 'start';
       }
       for (const item of positions) {
+        if (item.visible === false) continue;
         const weight = weightOf(item.star);
         const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
         if (item.star.id === selectedId) {
@@ -543,7 +864,9 @@ void main() {
       const canvasRef = React.useRef(null);
       const labelRef = React.useRef(null);
       const positionsRef = React.useRef([]);
-      const glRef = React.useRef({ canvas: null, renderer: null });
+      const glRef = React.useRef({ canvas: null, renderer: null, mode: null });
+      const drawRef = React.useRef(null);
+      const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -724,8 +1047,17 @@ void main() {
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas || !immersive || maps.length < 2) return undefined;
+        const viewMode = settings?.viewMode === '2d' ? '2d' : '3d';
+        const canSwitch = immersive && maps.length > 1;
+        if (!canvas || (viewMode === '2d' && !canSwitch)) return undefined;
         const onWheel = (event) => {
+          if (viewMode !== '2d' && event.shiftKey) {
+            event.preventDefault();
+            glRef.current.renderer?.zoom?.(event.deltaY);
+            drawRef.current?.();
+            return;
+          }
+          if (!canSwitch) return;
           event.preventDefault();
           const index = maps.findIndex((map) => map.id === activeId);
           if (index < 0) return;
@@ -737,7 +1069,7 @@ void main() {
         };
         canvas.addEventListener('wheel', onWheel, { passive: false });
         return () => canvas.removeEventListener('wheel', onWheel);
-      }, [immersive, maps, activeId]);
+      }, [immersive, maps, activeId, settings?.viewMode]);
 
       React.useEffect(() => {
         if (!mapToast) return undefined;
@@ -752,8 +1084,16 @@ void main() {
         const height = Math.max(240, size.height);
         const dpr = window.devicePixelRatio || 1;
 
-        if (!glRef.current.renderer || glRef.current.canvas !== canvas) {
-          glRef.current.renderer = createWebGLRenderer(canvas);
+        const mode = settings?.viewMode === '2d' ? '2d' : '3d';
+        if (
+          !glRef.current.renderer ||
+          glRef.current.canvas !== canvas ||
+          glRef.current.mode !== mode
+        ) {
+          const created =
+            mode === '3d' ? createWebGLRenderer3D(canvas) : createWebGLRenderer(canvas);
+          glRef.current.renderer = created || createWebGLRenderer(canvas);
+          glRef.current.mode = created ? mode : '2d';
           glRef.current.canvas = canvas;
         }
         const glRenderer = glRef.current.renderer;
@@ -776,16 +1116,17 @@ void main() {
           const radius = Math.min(width, height) * 0.34;
           const positions = stars.map((star, index) => {
             const point = stored.get(star.id);
-            if (point) return { x: point.x, y: point.y, star };
+            const z = starDepth(star, width, height);
+            if (point) return { x: point.x, y: point.y, z, star };
             const angle = (index / Math.max(1, stars.length)) * Math.PI * 2 - Math.PI / 2;
             const jitter = 0.82 + 0.18 * Math.sin(index * 1.7);
             return {
               x: centerX + Math.cos(angle) * radius * jitter,
               y: centerY + Math.sin(angle) * radius * jitter,
+              z,
               star,
             };
           });
-          positionsRef.current = positions;
           const byId = new Map(positions.map((item) => [item.star.id, item]));
           const edgePairs = [];
           for (const edge of data?.edges || []) {
@@ -793,22 +1134,28 @@ void main() {
             const to = byId.get(edge.to);
             if (from && to) edgePairs.push({ from, to });
           }
-          glRenderer.draw(width, height, dpr, positions, edgePairs);
           const emptyText = stars.length
             ? ''
             : query.trim()
               ? '没有找到相关记忆。'
               : '这片星域还空着。去对话里让 AI 记住一件事。';
-          drawLabels(
-            labelRef.current,
-            width,
-            height,
-            dpr,
-            positions,
-            selectedId,
-            emptyText,
-            data?.constellations || [],
-          );
+          const renderFrame = () => {
+            const projected = glRenderer.draw(width, height, dpr, positions, edgePairs);
+            const displayPositions = projected || positions;
+            positionsRef.current = displayPositions;
+            drawLabels(
+              labelRef.current,
+              width,
+              height,
+              dpr,
+              displayPositions,
+              selectedId,
+              emptyText,
+              data?.constellations || [],
+            );
+          };
+          drawRef.current = renderFrame;
+          renderFrame();
           return;
         }
 
@@ -912,9 +1259,50 @@ void main() {
           surface.fillText(emptyText, width / 2, height / 2);
           surface.textAlign = 'start';
         }
-      }, [data, selectedId, query, size, layoutVersion]);
+      }, [data, selectedId, query, size, layoutVersion, settings?.viewMode]);
+
+      function handlePointerDown(event) {
+        if (settings?.viewMode === '2d' || event.button !== 0) return;
+        dragRef.current = {
+          active: true,
+          lastX: event.clientX,
+          lastY: event.clientY,
+          moved: 0,
+        };
+        event.currentTarget.style.cursor = 'grabbing';
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      }
+
+      function handlePointerMove(event) {
+        if (!dragRef.current.active) return;
+        const dx = event.clientX - dragRef.current.lastX;
+        const dy = event.clientY - dragRef.current.lastY;
+        dragRef.current.lastX = event.clientX;
+        dragRef.current.lastY = event.clientY;
+        dragRef.current.moved += Math.abs(dx) + Math.abs(dy);
+        const renderer = glRef.current.renderer;
+        if (renderer?.orbit) {
+          renderer.orbit(dx, dy);
+          drawRef.current?.();
+        }
+      }
+
+      function handlePointerUp(event) {
+        if (!dragRef.current.active) return;
+        dragRef.current.active = false;
+        event.currentTarget.style.cursor = 'grab';
+        try {
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
+        } catch {
+          // pointer capture may already be released
+        }
+      }
 
       function onCanvasClick(event) {
+        if (dragRef.current.moved > 6) {
+          dragRef.current.moved = 0;
+          return;
+        }
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
@@ -1417,11 +1805,15 @@ void main() {
           h('canvas', {
             ref: canvasRef,
             onClick: onCanvasClick,
+            onPointerDown: handlePointerDown,
+            onPointerMove: handlePointerMove,
+            onPointerUp: handlePointerUp,
+            onPointerCancel: handlePointerUp,
             style: {
               display: 'block',
               width: '100%',
               height: '100%',
-              cursor: immersive ? 'default' : 'crosshair',
+              cursor: settings?.viewMode === '2d' ? (immersive ? 'default' : 'crosshair') : 'grab',
               background: 'linear-gradient(135deg, #0B1026, #131A3A)',
             },
           }),
@@ -1437,6 +1829,22 @@ void main() {
               pointerEvents: 'none',
             },
           }),
+          settings?.viewMode !== '2d'
+            ? h(
+                'div',
+                {
+                  style: {
+                    position: 'absolute',
+                    top: '12px',
+                    left: '12px',
+                    fontSize: '10px',
+                    opacity: 0.45,
+                    pointerEvents: 'none',
+                  },
+                },
+                '拖动旋转 · Shift+滚轮缩放',
+              )
+            : null,
           mapToast
             ? h(
                 'div',
@@ -2966,6 +3374,19 @@ void main() {
           }),
         ),
         h('h3', { style: { margin: '18px 0 10px', fontSize: '13px', opacity: 0.8 } }, '外观'),
+        field(
+          '视图',
+          h(
+            'select',
+            {
+              value: settings.viewMode || '3d',
+              onChange: (event) => update({ viewMode: event.target.value }),
+              style: { padding: '6px 8px', borderRadius: '8px', maxWidth: '160px' },
+            },
+            h('option', { value: '3d' }, '3D 群星'),
+            h('option', { value: '2d' }, '平面星图'),
+          ),
+        ),
         field(
           '主题',
           h(

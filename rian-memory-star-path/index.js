@@ -48,6 +48,7 @@ follow the conversation and mention the conflict.
 const DEFAULT_SETTINGS = {
   uiMode: 'immersive',
   theme: 'dark',
+  viewMode: '3d',
   topK: 6,
   tokenBudget: 600,
   threshold: 0.15,
