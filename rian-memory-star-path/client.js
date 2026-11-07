@@ -3453,6 +3453,9 @@ void main() {
           ? props.turn
           : Number(props.turn?.turn ?? props.turn?.index ?? props.turn?.number ?? 0);
       const [stats, setStats] = React.useState(null);
+      const [logOpen, setLogOpen] = React.useState(false);
+      const [logEntries, setLogEntries] = React.useState([]);
+      const [logError, setLogError] = React.useState(null);
 
       React.useEffect(() => {
         if (!sessionId || !turnNumber) return;
@@ -3469,20 +3472,154 @@ void main() {
         };
       }, [sessionId, turnNumber]);
 
+      async function openLog() {
+        try {
+          const value = await api(
+            `/recall-log?sessionId=${encodeURIComponent(sessionId)}`,
+          );
+          setLogEntries(
+            (value.entries || []).filter((item) => Number(item.turn) === turnNumber),
+          );
+          setLogError(null);
+          setLogOpen(true);
+        } catch (cause) {
+          setLogEntries([]);
+          setLogError(String(cause.message || cause));
+          setLogOpen(true);
+        }
+      }
+
       if (!stats || (!stats.saved && !stats.recalled)) return null;
+      const logModal = logOpen
+        ? h(
+            'div',
+            {
+              style: {
+                position: 'fixed',
+                inset: 0,
+                zIndex: 80,
+                display: 'grid',
+                placeItems: 'center',
+                background: 'rgba(4,7,18,0.72)',
+              },
+              onClick: () => setLogOpen(false),
+            },
+            h(
+              'div',
+              {
+                style: {
+                  width: '640px',
+                  maxWidth: 'calc(100vw - 32px)',
+                  maxHeight: '80vh',
+                  overflow: 'auto',
+                  padding: '16px',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(190,205,255,0.2)',
+                  background: '#10162f',
+                  color: '#E8ECFF',
+                  fontSize: '12px',
+                },
+                onClick: (event) => event.stopPropagation(),
+              },
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', marginBottom: '8px' } },
+                h('div', { style: { fontSize: '15px', fontWeight: 600 } }, `第 ${turnNumber} 回合召回`),
+                h('div', { style: { flex: 1 } }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    onClick: () => setLogOpen(false),
+                    style: { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
+                  },
+                  '×',
+                ),
+              ),
+              logError
+                ? h('div', { style: { color: '#FF9E9E' } }, logError)
+                : null,
+              logEntries.length
+                ? logEntries.map((entry, index) =>
+                    h(
+                      'div',
+                      {
+                        key: `${entry.step}-${index}`,
+                        style: {
+                          padding: '8px 0',
+                          borderBottom: '1px solid rgba(190,205,255,0.1)',
+                        },
+                      },
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: '8px', fontSize: '11px', opacity: 0.6 } },
+                        h('span', null, entry.mode === 'brief' ? '开场简报' : '每轮召回'),
+                        h('span', null, `step ${entry.step}`),
+                        h('span', null, `${entry.count} 颗`),
+                        h('span', null, new Date(entry.at).toLocaleTimeString()),
+                      ),
+                      h(
+                        'pre',
+                        {
+                          style: {
+                            margin: '6px 0 0',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+                            fontSize: '10px',
+                            opacity: 0.82,
+                            lineHeight: 1.5,
+                          },
+                        },
+                        entry.text || '（空）',
+                      ),
+                    ),
+                  )
+                : h(
+                    'div',
+                    { style: { opacity: 0.6, padding: '10px 0' } },
+                    '本轮没有召回日志。可能为空召回，或该回合发生在日志功能启用前。',
+                  ),
+            ),
+          )
+        : null;
       return h(
-        'div',
-        {
-          style: {
-            display: 'flex',
-            gap: '8px',
-            padding: '2px 0',
-            fontSize: '11px',
-            opacity: 0.62,
+        React.Fragment,
+        null,
+        h(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              gap: '8px',
+              padding: '2px 0',
+              fontSize: '11px',
+              opacity: 0.62,
+            },
           },
-        },
-        stats.saved ? h('span', null, `✦ 摘星 ${stats.saved}`) : null,
-        stats.recalled ? h('span', null, `召回 ${stats.recalled}`) : null,
+          stats.saved ? h('span', null, `✦ 摘星 ${stats.saved}`) : null,
+          stats.recalled
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  onClick: openLog,
+                  title: '查看本轮实际注入的召回内容',
+                  style: {
+                    border: 0,
+                    background: 'transparent',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontSize: '11px',
+                    textDecoration: 'underline dotted',
+                  },
+                },
+                `召回 ${stats.recalled}`,
+              )
+            : null,
+        ),
+        logModal,
       );
     }
 
