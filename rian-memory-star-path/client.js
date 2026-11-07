@@ -5,6 +5,39 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const API = '/plugins/rian-memory-star-path/api-v2';
 
+    const THEMES = {
+      dark: {
+        bg: '#0B1026',
+        panel: '#10162F',
+        panel2: '#131A3A',
+        text: '#E8ECFF',
+        border: 'rgba(190,205,255,0.2)',
+        subtle: 'rgba(255,255,255,0.06)',
+      },
+      light: {
+        bg: '#F4F6FB',
+        panel: '#FFFFFF',
+        panel2: '#E9EEF9',
+        text: '#17203A',
+        border: 'rgba(23,32,58,0.18)',
+        subtle: 'rgba(23,32,58,0.06)',
+      },
+    };
+
+    function applyTheme(name) {
+      if (typeof document === 'undefined') return;
+      const theme = THEMES[name] || THEMES.dark;
+      const root = document.documentElement;
+      root.style.setProperty('--ms-bg', theme.bg);
+      root.style.setProperty('--ms-panel', theme.panel);
+      root.style.setProperty('--ms-panel-2', theme.panel2);
+      root.style.setProperty('--ms-text', theme.text);
+      root.style.setProperty('--ms-border', theme.border);
+      root.style.setProperty('--ms-subtle', theme.subtle);
+    }
+
+    applyTheme('dark');
+
     const TYPE_COLOR = {
       fact: '#CFE3FF',
       preference: '#FFD479',
@@ -531,6 +564,10 @@ void main() {
           alive = false;
         };
       }, []);
+
+      React.useEffect(() => {
+        applyTheme(settings?.theme || 'dark');
+      }, [settings?.theme]);
 
       const loadMap = React.useCallback(
         (mapId) => {
@@ -1200,8 +1237,8 @@ void main() {
         padding: '5px 12px',
         fontSize: '12px',
         cursor: 'pointer',
-        color: id === activeId ? '#0B1026' : 'rgba(232,236,255,0.82)',
-        background: id === activeId ? '#FFD479' : 'rgba(255,255,255,0.08)',
+        color: id === activeId ? '#0B1026' : 'var(--ms-text)',
+        background: id === activeId ? '#FFD479' : 'var(--ms-subtle)',
         whiteSpace: 'nowrap',
       });
 
@@ -1214,8 +1251,9 @@ void main() {
             height: '100%',
             minHeight: 0,
             position: 'relative',
-            background: '#0B1026',
-            color: '#E8ECFF',
+            background: 'var(--ms-bg)',
+            color: 'var(--ms-text)',
+            colorScheme: settings?.theme === 'light' ? 'light' : 'dark',
             fontFamily: 'system-ui, sans-serif',
           },
         },
@@ -1227,7 +1265,7 @@ void main() {
               alignItems: 'center',
               gap: '8px',
               padding: '10px 12px',
-              borderBottom: '1px solid rgba(190,205,255,0.12)',
+              borderBottom: '1px solid var(--ms-border)',
               flexWrap: 'wrap',
             },
           },
@@ -1283,7 +1321,7 @@ void main() {
                     ...tabStyle('__mute'),
                     background: workspaceMuted
                       ? 'rgba(255,107,107,0.14)'
-                      : 'rgba(255,255,255,0.08)',
+                      : 'var(--ms-subtle)',
                     color: workspaceMuted ? '#FF9E9E' : 'inherit',
                   },
                   onClick: toggleWorkspaceMemory,
@@ -1299,7 +1337,7 @@ void main() {
                   title: '查看归档记忆',
                   style: {
                     ...tabStyle('__archive'),
-                    background: 'rgba(255,255,255,0.06)',
+                    background: 'var(--ms-subtle)',
                   },
                   onClick: () => setArchiveOpen(true),
                 },
@@ -1354,8 +1392,8 @@ void main() {
               width: '150px',
               padding: '5px 8px',
               borderRadius: '8px',
-              border: '1px solid rgba(190,205,255,0.2)',
-              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--ms-border)',
+              background: 'var(--ms-subtle)',
               color: 'inherit',
               fontSize: '11px',
               outline: 'none',
@@ -1402,7 +1440,7 @@ void main() {
                     padding: '4px 12px',
                     borderRadius: '999px',
                     background: 'rgba(12,17,38,0.82)',
-                    border: '1px solid rgba(190,205,255,0.2)',
+                    border: '1px solid var(--ms-border)',
                     fontSize: '12px',
                     pointerEvents: 'none',
                   },
@@ -1450,7 +1488,7 @@ void main() {
                     zIndex: 30,
                     padding: '10px',
                     borderRadius: '12px',
-                    border: '1px solid rgba(190,205,255,0.2)',
+                    border: '1px solid var(--ms-border)',
                     background: 'rgba(12,17,38,0.97)',
                     boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
                     fontSize: '12px',
@@ -1502,7 +1540,7 @@ void main() {
                                 marginBottom: '4px',
                                 borderRadius: '8px',
                                 border: 0,
-                                background: 'rgba(255,255,255,0.05)',
+                                background: 'var(--ms-subtle)',
                                 color: 'inherit',
                                 cursor: 'pointer',
                               },
@@ -1532,7 +1570,7 @@ void main() {
                     overflow: 'auto',
                     padding: '14px',
                     borderRadius: '12px',
-                    border: '1px solid rgba(190,205,255,0.2)',
+                    border: '1px solid var(--ms-border)',
                     background: 'rgba(12,17,38,0.94)',
                     boxShadow: '0 18px 40px rgba(0,0,0,0.35)',
                     fontSize: '12px',
@@ -1586,7 +1624,7 @@ void main() {
                             style: {
                               padding: '1px 6px',
                               borderRadius: '999px',
-                              background: 'rgba(255,255,255,0.08)',
+                              background: 'var(--ms-subtle)',
                               fontSize: '10px',
                             },
                           },
@@ -1615,7 +1653,7 @@ void main() {
                               style: {
                                 padding: '6px 8px',
                                 borderRadius: '8px',
-                                background: 'rgba(255,255,255,0.04)',
+                                background: 'var(--ms-subtle)',
                               },
                             },
                             h(
@@ -1643,7 +1681,7 @@ void main() {
                                       marginTop: '4px',
                                       padding: '2px 8px',
                                       borderRadius: '6px',
-                                      border: '1px solid rgba(190,205,255,0.25)',
+                                      border: '1px solid var(--ms-border)',
                                       background: 'transparent',
                                       color: 'inherit',
                                       fontSize: '10px',
@@ -1828,7 +1866,7 @@ void main() {
                         'div',
                         {
                           key: star.id,
-                          style: { padding: '9px 0', borderTop: '1px solid rgba(190,205,255,0.1)' },
+                          style: { padding: '9px 0', borderTop: '1px solid var(--ms-border)' },
                         },
                         h(
                           'div',
@@ -1907,9 +1945,9 @@ void main() {
                       maxWidth: 'calc(100vw - 32px)',
                       padding: '18px',
                       borderRadius: '14px',
-                      border: '1px solid rgba(190,205,255,0.22)',
-                      background: '#10162f',
-                      color: '#E8ECFF',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
                       fontSize: '12px',
                     },
                     onClick: (event) => event.stopPropagation(),
@@ -1933,8 +1971,8 @@ void main() {
                           width: '100%',
                           padding: '7px 8px',
                           borderRadius: '8px',
-                          border: '1px solid rgba(190,205,255,0.2)',
-                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid var(--ms-border)',
+                          background: 'var(--ms-subtle)',
                           color: 'inherit',
                           outline: 'none',
                         },
@@ -1954,8 +1992,8 @@ void main() {
                           width: '100%',
                           padding: '7px 8px',
                           borderRadius: '8px',
-                          border: '1px solid rgba(190,205,255,0.2)',
-                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid var(--ms-border)',
+                          background: 'var(--ms-subtle)',
                           color: 'inherit',
                         },
                       },
@@ -2010,9 +2048,9 @@ void main() {
                       overflow: 'auto',
                       padding: '18px',
                       borderRadius: '14px',
-                      border: '1px solid rgba(190,205,255,0.22)',
-                      background: '#10162f',
-                      color: '#E8ECFF',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
                       fontSize: '12px',
                     },
                     onClick: (event) => event.stopPropagation(),
@@ -2040,8 +2078,8 @@ void main() {
                           width: '100%',
                           padding: '7px 8px',
                           borderRadius: '8px',
-                          border: '1px solid rgba(190,205,255,0.2)',
-                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid var(--ms-border)',
+                          background: 'var(--ms-subtle)',
                           color: 'inherit',
                           outline: 'none',
                         },
@@ -2061,8 +2099,8 @@ void main() {
                           width: '100%',
                           padding: '7px 8px',
                           borderRadius: '8px',
-                          border: '1px solid rgba(190,205,255,0.2)',
-                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid var(--ms-border)',
+                          background: 'var(--ms-subtle)',
                           color: 'inherit',
                         },
                       },
@@ -2087,8 +2125,8 @@ void main() {
                         width: '90px',
                         padding: '7px 8px',
                         borderRadius: '8px',
-                        border: '1px solid rgba(190,205,255,0.2)',
-                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid var(--ms-border)',
+                        background: 'var(--ms-subtle)',
                         color: 'inherit',
                         outline: 'none',
                       },
@@ -2140,9 +2178,9 @@ void main() {
                       maxWidth: 'calc(100vw - 32px)',
                       padding: '18px',
                       borderRadius: '14px',
-                      border: '1px solid rgba(190,205,255,0.22)',
-                      background: '#10162f',
-                      color: '#E8ECFF',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
                       fontSize: '12px',
                     },
                     onClick: (event) => event.stopPropagation(),
@@ -2165,8 +2203,8 @@ void main() {
                       width: '100%',
                       padding: '7px 8px',
                       borderRadius: '8px',
-                      border: '1px solid rgba(190,205,255,0.2)',
-                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-subtle)',
                       color: 'inherit',
                       outline: 'none',
                     },
@@ -2218,8 +2256,8 @@ void main() {
                       padding: '18px',
                       borderRadius: '14px',
                       border: '1px solid rgba(255,107,107,0.35)',
-                      background: '#10162f',
-                      color: '#E8ECFF',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
                       fontSize: '12px',
                     },
                     onClick: (event) => event.stopPropagation(),
@@ -2281,8 +2319,8 @@ void main() {
                       padding: '18px',
                       borderRadius: '14px',
                       border: '1px solid rgba(255,212,121,0.35)',
-                      background: '#10162f',
-                      color: '#E8ECFF',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
                       fontSize: '12px',
                     },
                     onClick: (event) => event.stopPropagation(),
@@ -2358,7 +2396,7 @@ void main() {
               gap: '10px',
               alignItems: 'center',
               padding: '8px 12px',
-              borderTop: '1px solid rgba(190,205,255,0.12)',
+              borderTop: '1px solid var(--ms-border)',
               fontSize: '11px',
               opacity: 0.72,
             },
@@ -2392,9 +2430,9 @@ void main() {
                     overflow: 'auto',
                     padding: '16px',
                     borderRadius: '14px',
-                    border: '1px solid rgba(190,205,255,0.2)',
-                    background: '#10162f',
-                    color: '#E8ECFF',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
                   },
                   onClick: (event) => event.stopPropagation(),
                 },
@@ -2424,7 +2462,7 @@ void main() {
                             gap: '8px',
                             alignItems: 'center',
                             padding: '8px 0',
-                            borderBottom: '1px solid rgba(190,205,255,0.1)',
+                            borderBottom: '1px solid var(--ms-border)',
                           },
                         },
                         h(
@@ -2486,9 +2524,9 @@ void main() {
                     maxWidth: 'calc(100vw - 32px)',
                     padding: '18px',
                     borderRadius: '14px',
-                    border: '1px solid rgba(190,205,255,0.2)',
-                    background: '#10162f',
-                    color: '#E8ECFF',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
                     fontSize: '12px',
                   },
                 },
@@ -2538,10 +2576,10 @@ void main() {
                     width: 'min(520px, 100%)',
                     padding: '24px',
                     borderRadius: '16px',
-                    border: '1px solid rgba(190,205,255,0.2)',
+                    border: '1px solid var(--ms-border)',
                     background: 'rgba(14,20,44,0.98)',
                     boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
-                    color: '#E8ECFF',
+                    color: 'var(--ms-text)',
                   },
                 },
                 h('h2', { style: { margin: '0 0 6px', fontSize: '20px' } }, '欢迎来到雨咯记忆星'),
@@ -2638,6 +2676,10 @@ void main() {
           alive = false;
         };
       }, []);
+
+      React.useEffect(() => {
+        applyTheme(settings?.theme || 'dark');
+      }, [settings?.theme]);
 
       function update(patch) {
         const next = { ...settings, ...patch };
@@ -2804,7 +2846,7 @@ void main() {
 
       return h(
         'div',
-        { style: { padding: '20px 24px', maxWidth: '760px', color: 'var(--dsw-alias-text-primary, inherit)' } },
+        { style: { padding: '20px 24px', maxWidth: '760px', minHeight: '100%', background: 'var(--ms-bg)', color: 'var(--ms-text)', colorScheme: settings?.theme === 'light' ? 'light' : 'dark' } },
         h('h2', { style: { margin: '0 0 4px', fontSize: '18px' } }, '雨咯记忆星'),
         h(
           'p',
@@ -2899,6 +2941,19 @@ void main() {
         ),
         h('h3', { style: { margin: '18px 0 10px', fontSize: '13px', opacity: 0.8 } }, '外观'),
         field(
+          '主题',
+          h(
+            'select',
+            {
+              value: settings.theme || 'dark',
+              onChange: (event) => update({ theme: event.target.value }),
+              style: { padding: '6px 8px', borderRadius: '8px', maxWidth: '160px' },
+            },
+            h('option', { value: 'dark' }, '深色'),
+            h('option', { value: 'light' }, '浅色'),
+          ),
+        ),
+        field(
           '雨丝强度',
           h(
             'select',
@@ -2964,7 +3019,7 @@ void main() {
         error ? h('div', { style: { color: '#FF9E9E', fontSize: '12px' } }, error) : null,
         h(
           'div',
-          { style: { marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(190,205,255,0.15)' } },
+          { style: { marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--ms-border)' } },
           h(
             'div',
             { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' } },
@@ -2996,8 +3051,8 @@ void main() {
                       style: {
                         padding: '10px 12px',
                         borderRadius: '10px',
-                        border: '1px solid rgba(190,205,255,0.14)',
-                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid var(--ms-border)',
+                        background: 'var(--ms-subtle)',
                       },
                     },
                     h(
@@ -3059,7 +3114,7 @@ void main() {
             style: {
               marginTop: '24px',
               paddingTop: '16px',
-              borderTop: '1px solid rgba(190,205,255,0.15)',
+              borderTop: '1px solid var(--ms-border)',
             },
           },
           h('h3', { style: { margin: '0 0 6px', fontSize: '14px' } }, '数据'),
@@ -3128,7 +3183,7 @@ void main() {
             style: {
               marginTop: '24px',
               paddingTop: '16px',
-              borderTop: '1px solid rgba(190,205,255,0.15)',
+              borderTop: '1px solid var(--ms-border)',
             },
           },
           h('h3', { style: { margin: '0 0 6px', fontSize: '14px' } }, '关于'),
@@ -3174,9 +3229,9 @@ void main() {
                     maxWidth: 'calc(100vw - 32px)',
                     padding: '18px',
                     borderRadius: '14px',
-                    border: '1px solid rgba(190,205,255,0.2)',
-                    background: '#10162f',
-                    color: '#E8ECFF',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
                     fontSize: '12px',
                   },
                 },
@@ -3220,9 +3275,9 @@ void main() {
                     maxWidth: 'calc(100vw - 32px)',
                     padding: '18px',
                     borderRadius: '14px',
-                    border: '1px solid rgba(190,205,255,0.2)',
-                    background: '#10162f',
-                    color: '#E8ECFF',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
                     fontSize: '12px',
                   },
                 },
@@ -3273,9 +3328,9 @@ void main() {
                     maxWidth: 'calc(100vw - 32px)',
                     padding: '18px',
                     borderRadius: '14px',
-                    border: '1px solid rgba(190,205,255,0.2)',
-                    background: '#10162f',
-                    color: '#E8ECFF',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
                     fontSize: '12px',
                   },
                 },
@@ -3300,7 +3355,7 @@ void main() {
                           marginTop: '6px',
                           padding: '6px 8px',
                           borderRadius: '8px',
-                          background: 'rgba(255,255,255,0.05)',
+                          background: 'var(--ms-subtle)',
                         },
                       },
                       `「${item.name}」· ${item.starCount} 颗星`,
@@ -3405,7 +3460,7 @@ void main() {
               gap: '4px',
               padding: '2px 8px',
               borderRadius: '999px',
-              border: '1px solid rgba(190,205,255,0.25)',
+              border: '1px solid var(--ms-border)',
               background: 'rgba(127,216,255,0.08)',
               color: 'inherit',
               fontSize: '11px',
@@ -3434,8 +3489,8 @@ void main() {
               height: '20px',
               marginLeft: '4px',
               borderRadius: '999px',
-              border: '1px solid rgba(190,205,255,0.25)',
-              background: muted ? 'rgba(255,107,107,0.16)' : 'rgba(255,255,255,0.06)',
+              border: '1px solid var(--ms-border)',
+              background: muted ? 'rgba(255,107,107,0.16)' : 'var(--ms-subtle)',
               color: muted ? '#FF9E9E' : 'inherit',
               fontSize: '10px',
               cursor: 'pointer',
@@ -3514,9 +3569,9 @@ void main() {
                   overflow: 'auto',
                   padding: '16px',
                   borderRadius: '14px',
-                  border: '1px solid rgba(190,205,255,0.2)',
-                  background: '#10162f',
-                  color: '#E8ECFF',
+                  border: '1px solid var(--ms-border)',
+                  background: 'var(--ms-panel)',
+                  color: 'var(--ms-text)',
                   fontSize: '12px',
                 },
                 onClick: (event) => event.stopPropagation(),
@@ -3547,7 +3602,7 @@ void main() {
                         key: `${entry.step}-${index}`,
                         style: {
                           padding: '8px 0',
-                          borderBottom: '1px solid rgba(190,205,255,0.1)',
+                          borderBottom: '1px solid var(--ms-border)',
                         },
                       },
                       h(
