@@ -360,7 +360,7 @@ function run() {
 }
 `;
 
-    const STAR_POINT_SIZE = 12;
+    const STAR_POINT_SIZE = 16;
 
     function createWebGLRenderer(canvas) {
       const gl = canvas.getContext('webgl2', {
@@ -2353,7 +2353,7 @@ void main() {
                 zIndex: 4,
               },
             },
-            '拖动平移 · 所有星散布在画布内外 · 滚轮切图',
+            '拖动平移 · 所有星散布在画布内外 · 星点固定 16px · 滚轮切图',
           ),
           settings?.viewMode !== '2d'
             ? h(

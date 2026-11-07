@@ -86,7 +86,7 @@ function detectSensitive(text, mode = 'standard', customWords = []) {
   return null;
 }
 
-const PLUGIN_VERSION = '0.0.1';
+const PLUGIN_VERSION = '0.0.2';
 let HALF_LIFE_DAYS = 45;
 
 function nowIso() {
