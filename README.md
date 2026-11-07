@@ -8,6 +8,7 @@
 - 仓库：<https://github.com/fongwuyan/Rian-Memory-Star-Path>
 - 设计文档：[docs/rian-memory-star-path.design.md](docs/rian-memory-star-path.design.md)
 - 发布检查清单：[docs/release-checklist.md](docs/release-checklist.md)
+- 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
 ## 特性
 
