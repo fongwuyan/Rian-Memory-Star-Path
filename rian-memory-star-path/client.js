@@ -796,6 +796,7 @@ void main() {
           }
 
           const count = positions.length;
+          const heavy = count > 20000;
           if (count) {
             const positionData = new Float32Array(count * 3);
             const sizeData = new Float32Array(count);
@@ -805,8 +806,10 @@ void main() {
             positions.forEach((item, index) => {
               const world = orbit(item.x, item.y, item.z);
               const point = project(world.x, world.y, world.z);
-              const weight = weightOf(item.star);
-              const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
+              const weight = heavy ? 0.5 : weightOf(item.star);
+              const radius = heavy
+                ? 2.2 + 3 * Number(item.star.importance ?? 0.5)
+                : 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
               positionData[index * 3] = point.nx;
               positionData[index * 3 + 1] = point.ny;
               positionData[index * 3 + 2] = point.nz;
@@ -967,9 +970,10 @@ void main() {
         surface.fillText(constellation.name || '', centerX, Math.max(12, centerY - radius + 12));
         surface.textAlign = 'start';
       }
+      const dense = positions.length > 2000;
       for (const item of positions) {
         if (item.visible === false) continue;
-        const weight = weightOf(item.star);
+        const weight = dense ? 0.5 : weightOf(item.star);
         const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
         if (item.star.id === selectedId) {
           surface.strokeStyle = '#FFD479';
@@ -1153,6 +1157,35 @@ void main() {
         const centerY = height / 2;
         const radius = Math.min(width, height) * 0.34;
         const initial = new Map();
+        if (active.length > 20000) {
+          const maxRadius = Math.min(width, height) * 0.46;
+          active.forEach((star, index) => {
+            const t = index / Math.max(1, active.length - 1);
+            const arm = index % 3;
+            const spiralRadius = Math.sqrt(t) * maxRadius;
+            const angle =
+              t * Math.PI * 12 +
+              arm * ((Math.PI * 2) / 3) +
+              (index % 29) * 0.012;
+            const jitter = 0.9 + 0.1 * Math.sin(index * 1.618);
+            initial.set(star.id, {
+              x: centerX + Math.cos(angle) * spiralRadius * jitter,
+              y: centerY + Math.sin(angle) * spiralRadius * jitter,
+            });
+          });
+          const state = layoutRef.current;
+          state.positions = initial;
+          if (state.worker) {
+            state.worker.terminate();
+            state.worker = null;
+          }
+          if (state.url) {
+            URL.revokeObjectURL(state.url);
+            state.url = null;
+          }
+          setLayoutVersion((version) => version + 1);
+          return undefined;
+        }
         active.forEach((star, index) => {
           if (star.position?.x) {
             initial.set(star.id, { x: star.position.x * width, y: star.position.y * height });
@@ -1457,13 +1490,15 @@ void main() {
 
       React.useEffect(() => {
         if (settings?.viewMode === '2d') return undefined;
+        const heavy = (data?.stars?.length || 0) > 50000;
+        const interval = heavy ? 50 : 33;
         let frame = 0;
         let lastDraw = 0;
         const tick = (time) => {
           const renderer = glRef.current.renderer;
           if (renderer?.kind === '3d') {
             renderer.tick(time);
-            if (time - lastDraw > 33) {
+            if (time - lastDraw > interval) {
               drawRef.current?.();
               lastDraw = time;
             }
@@ -1472,7 +1507,7 @@ void main() {
         };
         frame = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(frame);
-      }, [settings?.viewMode]);
+      }, [settings?.viewMode, data?.stars?.length]);
 
       React.useEffect(() => {
         glRef.current.renderer?.setAutoRotate?.(autoRotate);
