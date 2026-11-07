@@ -164,6 +164,14 @@ node tests/regression.mjs
 http://127.0.0.1:51107/plugins/rian-memory-star-path/api-v2
 ```
 
+地图分页 API：
+
+```text
+GET /maps/:id/page?offset=0&limit=5000
+```
+
+按权重降序返回活跃星，响应包含 `total`、`offset`、`limit`、`nextOffset`、`hasMore`；只返回本页星点之间的边。客户端首屏取 5000 星，放大时自动补页。
+
 可通过环境变量覆盖：
 
 ```powershell
@@ -189,7 +197,7 @@ node tests/theme-contrast.mjs
 
 布局按权重分层做无规律散布，不再跑力导向；标签只在 ≤120 星时绘制。10k 热检索 p50 6.7ms、p95 9.8ms（本机 desktop profile）。
 
-100k 测试图（`测试星图 10w`）：导入约 1.94s，地图 JSON 约 48.9MB / 读取 864ms，冷检索约 1.86s，热检索 14–17ms；客户端对超大图使用按权重分层无规律散布，初始只渲染高权重外围层，3D 自动旋转降至约 20fps。
+100k 测试图（`测试星图 10w`）：整图导出约 48.9MB；分页首屏 5000 星约 2.5MB / 341ms，后续每页约 60ms；冷检索约 1.86s，热检索 14–17ms；客户端对超大图使用按权重分层无规律散布，初始只渲染高权重外围层，3D 自动旋转降至约 20fps。
 
 ### 版本
 

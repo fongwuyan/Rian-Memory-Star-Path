@@ -907,7 +907,7 @@ rian-memory-star-<date>.zip
 
 ```text
 GET   /plugins/rian-memory-star/api/maps
-GET   /plugins/rian-memory-star/api/maps/:id/stars?limit=500&cursor=...
+GET   /plugins/rian-memory-star/api/maps/:id/page?offset=0&limit=5000
 GET   /plugins/rian-memory-star/api/stars/:id
 GET   /plugins/rian-memory-star/api/traces?sessionId=...
 POST  /plugins/rian-memory-star/api/stars
@@ -916,17 +916,17 @@ POST  /plugins/rian-memory-star/api/maps
 ```
 
 - 只接受同源、本机回环请求；写操作校验 `Origin` 与 `Content-Type`；
-- 列表返回紧凑字段（id、标题、类型、标签、权重、位置），事实 / 理由 / 条件按需取详情；
+- 地图分页按权重降序返回活跃星，带 `total / offset / limit / nextOffset / hasMore`；只返回页内边；
 - 导出 / 导入走单独的 zip 路由；
 - 变更后客户端主动刷新，暂不做 SSE。
 
 ### 11.6 渲染与布局
 
-- 原生 WebGL2（无第三方渲染库）：实例化四边形画星点，线段画边，片元做着色；星座柔光晕用径向渐变；
+- 原生 WebGL2（无第三方渲染库）：实例化四边形画星点，线段画边，片元做着色；
 - 文字标签用 2D canvas 覆盖层，避免字体图集；
 - WebGL 不可用时降级 Canvas 2D；
-- 力导向在 Web Worker 中算（Barnes-Hut，内联 Blob URL 加载），位置用 `Float32Array` 传回，主线程插值渲染；
-- 10k 星目标 60fps；布局初次收敛 < 5s；拖动时局部重算。
+- 无规律散布布局：按权重降序分配半径与层级，高权重外围；2D / 3D 双模式；
+- 分页懒加载 + 分层渲染：初始 5000 星，放大时按层自动补页，只渲染当前层；
 
 ---
 

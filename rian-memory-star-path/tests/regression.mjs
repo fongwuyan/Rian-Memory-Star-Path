@@ -71,6 +71,17 @@ async function main() {
   const third = await createStar(map.id, `回归-三-${stamp}`, '回归测试第三条。', ['回归']);
   const fourth = await createStar(map.id, `回归-四-${stamp}`, '回归测试第四条。', ['回归']);
 
+  const pageOne = await request(`/maps/${encodeURIComponent(map.id)}/page?offset=0&limit=2`);
+  assert.equal(pageOne.total, 4);
+  assert.equal(pageOne.stars.length, 2);
+  assert.equal(pageOne.hasMore, true);
+  assert.equal(pageOne.nextOffset, 2);
+  const pageTwo = await request(`/maps/${encodeURIComponent(map.id)}/page?offset=2&limit=2`);
+  assert.equal(pageTwo.stars.length, 2);
+  assert.equal(pageTwo.hasMore, false);
+  const pageOneIds = new Set(pageOne.stars.map((star) => star.id));
+  assert.equal(pageTwo.stars.filter((star) => pageOneIds.has(star.id)).length, 0);
+
   const edgeResult = await request('/edges', {
     method: 'POST',
     body: JSON.stringify({ from: oldStar.id, to: newStar.id, relation: 'contradicts' }),

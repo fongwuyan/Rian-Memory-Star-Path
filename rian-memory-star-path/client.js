@@ -72,9 +72,10 @@ window.__ModuleLoader__.load({
       return 1;
     }
 
-    function buildScatterLayout(stars, width, height, threeD) {
+    function buildScatterLayout(stars, width, height, threeD, totalCount) {
       const count = stars.length;
-      const tierCount = scatterTierCount(count);
+      const total = Math.max(count, Number(totalCount) || count);
+      const tierCount = scatterTierCount(total);
       const centerX = width / 2;
       const centerY = height / 2;
       const maxRadius = Math.min(width, height) * 0.46;
@@ -86,7 +87,7 @@ window.__ModuleLoader__.load({
         .sort((a, b) => b.weight - a.weight);
       const positions = new Map();
       ranked.forEach((entry, rank) => {
-        const t = count <= 1 ? 0 : rank / (count - 1);
+        const t = total <= 1 ? 0 : rank / (total - 1);
         const tier = Math.min(tierCount - 1, Math.floor(t * tierCount));
         const h1 = hash01(rank * 3 + 1);
         const h2 = hash01(rank * 3 + 2);
@@ -1056,11 +1057,13 @@ void main() {
       const drawRef = React.useRef(null);
       const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
       const hoveredIdRef = React.useRef(null);
+      const loadingMoreRef = React.useRef(false);
+      const pendingFullLoadRef = React.useRef('');
       const [hovered, setHovered] = React.useState(null);
       const [autoRotate, setAutoRotate] = React.useState(true);
       const [revealTier, setRevealTier] = React.useState(0);
       const [zoom2d, setZoom2d] = React.useState(1);
-      const tierCount = scatterTierCount((data?.stars || []).length);
+      const tierCount = scatterTierCount(data?.total || (data?.stars || []).length);
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1098,15 +1101,85 @@ void main() {
       const loadMap = React.useCallback(
         (mapId) => {
           if (!mapId) return;
-          api(`/maps/${encodeURIComponent(mapId)}`)
+          const pageUrl = `/maps/${encodeURIComponent(mapId)}/page?offset=0&limit=5000`;
+          api(pageUrl)
             .then((value) => {
-              setData(value);
+              const stars = value.stars || [];
+              setData({
+                ...value,
+                stars,
+                edges: value.edges || [],
+                constellations: value.constellations || [],
+                total: value.total ?? stars.length,
+                nextOffset: value.nextOffset ?? stars.length,
+                hasMore: Boolean(value.hasMore),
+              });
               setSelectedId(null);
             })
+            .catch(() =>
+              api(`/maps/${encodeURIComponent(mapId)}`).then((value) => {
+                const stars = value.stars || [];
+                setData({
+                  ...value,
+                  stars,
+                  edges: value.edges || [],
+                  constellations: value.constellations || [],
+                  total: stars.length,
+                  nextOffset: stars.length,
+                  hasMore: false,
+                });
+                setSelectedId(null);
+              }),
+            )
             .catch((cause) => setError(String(cause.message || cause)));
         },
         [],
       );
+
+      function loadMore() {
+        if (!data?.hasMore || loadingMoreRef.current || !data.map?.id) return;
+        loadingMoreRef.current = true;
+        const offset = data.nextOffset ?? data.stars.length;
+        api(
+          `/maps/${encodeURIComponent(data.map.id)}/page?offset=${offset}&limit=5000`,
+        )
+          .then((page) => {
+            const incoming = page.stars || [];
+            setData((previous) => {
+              if (!previous) return previous;
+              const known = new Set(previous.stars.map((star) => star.id));
+              const mergedStars = [...previous.stars];
+              for (const star of incoming) {
+                if (!known.has(star.id)) {
+                  known.add(star.id);
+                  mergedStars.push(star);
+                }
+              }
+              const edgeKey = (edge) => `${edge.from}|${edge.to}|${edge.relation || ''}`;
+              const knownEdges = new Set(previous.edges.map(edgeKey));
+              const mergedEdges = [...previous.edges];
+              for (const edge of page.edges || []) {
+                const key = edgeKey(edge);
+                if (!knownEdges.has(key)) {
+                  knownEdges.add(key);
+                  mergedEdges.push(edge);
+                }
+              }
+              return {
+                ...previous,
+                stars: mergedStars,
+                edges: mergedEdges,
+                total: page.total ?? previous.total,
+                nextOffset: page.nextOffset ?? mergedStars.length,
+                hasMore: Boolean(page.hasMore) && incoming.length > 0,
+              };
+            });
+          })
+          .catch((cause) => setError(String(cause.message || cause)))
+          .finally(() => {
+            loadingMoreRef.current = false;
+          });
+      }
 
       React.useEffect(() => {
         loadMap(activeId);
@@ -1131,8 +1204,31 @@ void main() {
         if ((data?.stars || []).some((star) => star.id === pendingSelectId)) {
           setSelectedId(pendingSelectId);
           setPendingSelectId(null);
+          return;
+        }
+        if (data?.hasMore && data.map?.id && pendingFullLoadRef.current !== pendingSelectId) {
+          pendingFullLoadRef.current = pendingSelectId;
+          api(`/maps/${encodeURIComponent(data.map.id)}`)
+            .then((full) => {
+              const stars = full.stars || [];
+              setData({
+                ...full,
+                stars,
+                total: stars.length,
+                nextOffset: stars.length,
+                hasMore: false,
+              });
+            })
+            .catch((cause) => setError(String(cause.message || cause)));
         }
       }, [data, pendingSelectId]);
+
+      React.useEffect(() => {
+        if (!data?.hasMore) return;
+        const total = data.total || data.stars.length;
+        const needed = Math.ceil(((revealTier + 1) / tierCount) * total);
+        if (data.stars.length < needed) loadMore();
+      }, [revealTier, data, tierCount]);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
@@ -1161,6 +1257,7 @@ void main() {
           width,
           height,
           settings?.viewMode !== '2d',
+          data?.total || active.length,
         );
         const scatterState = layoutRef.current;
         scatterState.positions = scatterInitial;
@@ -1771,7 +1868,8 @@ void main() {
 
       const selected = (data?.stars || []).find((star) => star.id === selectedId) || null;
       const pending = (data?.stars || []).filter((star) => star.status === 'pending');
-      const activeCount = (data?.stars || []).filter((star) => star.status === 'active').length;
+      const activeCount =
+        data?.total ?? (data?.stars || []).filter((star) => star.status === 'active').length;
       const archivedStars = (data?.stars || [])
         .filter((star) => star.status === 'archived')
         .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));

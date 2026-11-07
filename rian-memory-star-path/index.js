@@ -218,6 +218,7 @@ export function apply(ctx) {
 
   const index = { version: 1, publicMapId: '', maps: [] };
   const maps = new Map();
+  const pageCache = new Map();
   const bindings = new Map();
   const recallCache = new Map();
   const turnTrace = new Map();
@@ -347,6 +348,7 @@ export function apply(ctx) {
   }
 
   function persistMap(mapId) {
+    pageCache.delete(mapId);
     return enqueueWrite(`map:${mapId}`, () => {
       const data = maps.get(mapId);
       if (!data) return undefined;
@@ -703,6 +705,26 @@ export function apply(ctx) {
     const base = Number(star.importance ?? TYPE_IMPORTANCE[star.type] ?? 0.5);
     const recall = Math.min(0.15, Number(star.recallCount || 0) * 0.01);
     return clamp(base * (0.35 + 0.65 * recency) + recall + (star.pinned ? 0.25 : 0), 0, 1);
+  }
+
+  function sortedActivePage(mapId) {
+    const data = maps.get(mapId);
+    if (!data) return null;
+    const cached = pageCache.get(mapId);
+    if (cached && cached.starsRef === data.stars) return cached.list;
+    const list = data.stars
+      .filter((star) => star.status === 'active')
+      .map((star) => ({
+        star,
+        weight: weightOf(star) + Number(star.importance ?? 0.5) * 0.6,
+      }))
+      .sort(
+        (a, b) =>
+          b.weight - a.weight ||
+          String(a.star.id).localeCompare(String(b.star.id)),
+      );
+    pageCache.set(mapId, { starsRef: data.stars, list });
+    return list;
   }
 
   function invalidateIndex(mapId) {
@@ -1533,6 +1555,39 @@ export function apply(ctx) {
             sendJson(res, 200, {
               publicMapId: index.publicMapId,
               maps: index.maps.map(mapSummary),
+            });
+            return;
+          }
+
+          if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'page') {
+            const data = maps.get(parts[1]);
+            if (!data) {
+              sendJson(res, 404, { error: 'map not found' });
+              return;
+            }
+            const limit = Math.max(
+              1,
+              Math.min(10000, Number(url.searchParams.get('limit')) || 2500),
+            );
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            const sorted = sortedActivePage(parts[1]) || [];
+            const total = sorted.length;
+            const page = sorted.slice(offset, offset + limit).map((entry) => entry.star);
+            const pageIds = new Set(page.map((star) => star.id));
+            const edges = (data.edges || []).filter(
+              (edge) => pageIds.has(edge.from) && pageIds.has(edge.to),
+            );
+            sendJson(res, 200, {
+              map: data.map,
+              publicMapId: index.publicMapId,
+              stars: page,
+              edges,
+              constellations: offset === 0 ? data.constellations || [] : [],
+              total,
+              offset,
+              limit,
+              nextOffset: Math.min(total, offset + page.length),
+              hasMore: offset + page.length < total,
             });
             return;
           }
