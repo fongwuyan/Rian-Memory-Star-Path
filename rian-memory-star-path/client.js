@@ -85,11 +85,11 @@ window.__ModuleLoader__.load({
       if (!count) return [];
       const aspect = width / height;
       const baseArea = width * height * 1.44;
-      const area = Math.max(baseArea, (count * 24 * 24) / 0.22);
+      const area = Math.max(baseArea, (count * 40 * 40) / 0.22);
       const worldWidth = Math.max(Math.sqrt(area * aspect), width * 1.2);
       const worldHeight = Math.max(Math.sqrt(area / aspect), height * 1.2);
       const minDistance = Math.max(
-        20,
+        28,
         Math.sqrt((worldWidth * worldHeight * 0.22) / count),
       );
       const points = [];
@@ -360,7 +360,7 @@ function run() {
 }
 `;
 
-    const STAR_POINT_SIZE = 16;
+    const STAR_POINT_SIZE = 32;
 
     function createWebGLRenderer(canvas) {
       const gl = canvas.getContext('webgl2', {
@@ -374,22 +374,25 @@ function run() {
 in vec2 a_position;
 in float a_size;
 in vec3 a_color;
+in vec2 a_corner;
 uniform vec2 u_resolution;
 out vec3 v_color;
+out vec2 v_corner;
 void main() {
-  vec2 clip = (a_position / u_resolution) * 2.0 - 1.0;
+  vec2 point = a_position + a_corner * (a_size * 0.5);
+  vec2 clip = (point / u_resolution) * 2.0 - 1.0;
   gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
-  gl_PointSize = a_size;
   v_color = a_color;
+  v_corner = a_corner;
 }`;
 
       const starFS = `#version 300 es
 precision mediump float;
 in vec3 v_color;
+in vec2 v_corner;
 out vec4 out_color;
 void main() {
-  vec2 uv = gl_PointCoord * 2.0 - 1.0;
-  float d = length(uv);
+  float d = length(v_corner);
   if (d > 1.0) discard;
   float core = smoothstep(1.0, 0.0, d);
   float glow = pow(core, 2.0);
@@ -450,19 +453,32 @@ void main() {
       const starPosBuffer = gl.createBuffer();
       const starSizeBuffer = gl.createBuffer();
       const starColorBuffer = gl.createBuffer();
+      const starCornerBuffer = gl.createBuffer();
       gl.bindVertexArray(starVao);
       const starPosLoc = gl.getAttribLocation(starProgram, 'a_position');
       const starSizeLoc = gl.getAttribLocation(starProgram, 'a_size');
       const starColorLoc = gl.getAttribLocation(starProgram, 'a_color');
+      const starCornerLoc = gl.getAttribLocation(starProgram, 'a_corner');
       gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
       gl.enableVertexAttribArray(starPosLoc);
       gl.vertexAttribPointer(starPosLoc, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(starPosLoc, 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, starSizeBuffer);
       gl.enableVertexAttribArray(starSizeLoc);
       gl.vertexAttribPointer(starSizeLoc, 1, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(starSizeLoc, 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
       gl.enableVertexAttribArray(starColorLoc);
       gl.vertexAttribPointer(starColorLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(starColorLoc, 1);
+      gl.bindBuffer(gl.ARRAY_BUFFER, starCornerBuffer);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+        gl.STATIC_DRAW,
+      );
+      gl.enableVertexAttribArray(starCornerLoc);
+      gl.vertexAttribPointer(starCornerLoc, 2, gl.FLOAT, false, 0, 0);
 
       const lineVao = gl.createVertexArray();
       const lineBuffer = gl.createBuffer();
@@ -538,7 +554,7 @@ void main() {
             gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
             gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
-            gl.drawArrays(gl.POINTS, 0, count);
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
           }
           return projected;
         },
@@ -2353,7 +2369,7 @@ void main() {
                 zIndex: 4,
               },
             },
-            '拖动平移 · 所有星散布在画布内外 · 星点固定 16px · 滚轮切图',
+            '拖动平移 · 所有星散布在画布内外 · 星点固定 32px · 滚轮切图',
           ),
           settings?.viewMode !== '2d'
             ? h(
