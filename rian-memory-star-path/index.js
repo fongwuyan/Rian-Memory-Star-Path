@@ -707,7 +707,12 @@ export function apply(ctx) {
       addField(star.reason, 1);
       addField(star.condition, 1);
       for (const term of tf.keys()) df.set(term, (df.get(term) || 0) + 1);
-      docs.push({ star, tf, len });
+      docs.push({
+        star,
+        tf,
+        len,
+        haystack: `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase(),
+      });
       totalLen += len;
     }
     const index = {
@@ -766,7 +771,7 @@ export function apply(ctx) {
           (procedureCue && star.type === 'procedure')
             ? 1
             : 0;
-        const haystack = `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase();
+        const haystack = doc.haystack;
         const exactSignal = haystack.includes(lower) ? 1 : 0;
         const score =
           0.45 * text + 0.25 * weightOf(star, at) + 0.15 * typeSignal + 0.15 * exactSignal;

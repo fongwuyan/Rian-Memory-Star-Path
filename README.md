@@ -175,9 +175,9 @@ $env:DSH_MEMORY_API = "http://127.0.0.1:51107/plugins/rian-memory-star-path/api-
 | 规模 | 导入 | 冷检索 | 热检索 | 地图读取 | zip 导出 |
 |---|---|---|---|---|---|
 | 2000 星 | 90ms | 37ms | 8ms | 942KB / 22ms | 38KB / 30ms |
-| 10000 星 | 229ms | 216ms | 14ms | 4.74MB / 89ms | 188KB / 128ms |
+| 10000 星 | 229ms | 216ms | 6.7ms（p95 9.8ms） | 4.74MB / 89ms | 188KB / 128ms |
 
-10k 布局 Worker 约 1.76s；超过 600 星使用采样排斥，标签只在 ≤120 星时绘制。
+10k 布局 Worker 约 1.76s；超过 600 星使用采样排斥，标签只在 ≤120 星时绘制。10k 热检索 p50 6.7ms、p95 9.8ms（本机 desktop profile）。
 
 ### 版本
 

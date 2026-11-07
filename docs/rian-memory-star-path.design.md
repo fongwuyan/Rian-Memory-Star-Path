@@ -1200,7 +1200,7 @@ POST  /plugins/rian-memory-star/api/maps
 - zip 为 `manifest.json` + `maps/*.json` + `settings.json`，历史内嵌在星对象；
 - 星座建议当前是标签聚类，未接 LLM 命名；
 - 导入合并按标题 + 事实去重，边 / 星座重映射；同名逐图三选一在客户端弹窗完成；
-- 10k 布局用采样排斥，Worker 实测约 1.8s；标签在 ≤120 星时绘制。
+- 10k 布局用采样排斥，Worker 实测约 1.8s；标签在 ≤120 星时绘制；热检索 p95 约 9.8ms。
 
 ---
 
