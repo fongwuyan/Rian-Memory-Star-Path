@@ -49,7 +49,6 @@ const DEFAULT_SETTINGS = {
   uiMode: 'immersive',
   theme: 'dark',
   viewMode: '3d',
-  galaxyPreset: 'spiral',
   topK: 6,
   tokenBudget: 600,
   threshold: 0.15,

@@ -21,7 +21,6 @@ window.__ModuleLoader__.load({
         nebula1: 'rgba(90,70,200,0.28)',
         nebula2: 'rgba(20,120,180,0.2)',
         nebula3: 'rgba(255,120,200,0.1)',
-        coreGlow: 'rgba(255,230,170,0.16)',
       },
       light: {
         bg: '#F4F6FB',
@@ -38,7 +37,6 @@ window.__ModuleLoader__.load({
         nebula1: 'rgba(120,140,255,0.18)',
         nebula2: 'rgba(80,200,220,0.14)',
         nebula3: 'rgba(255,160,220,0.12)',
-        coreGlow: 'rgba(90,120,255,0.12)',
       },
     };
 
@@ -60,175 +58,6 @@ window.__ModuleLoader__.load({
       root.style.setProperty('--ms-nebula-1', theme.nebula1);
       root.style.setProperty('--ms-nebula-2', theme.nebula2);
       root.style.setProperty('--ms-nebula-3', theme.nebula3);
-      root.style.setProperty('--ms-core-glow', theme.coreGlow);
-    }
-
-    const GALAXY_PRESETS = [
-      {
-        id: 'spiral',
-        name: '螺旋银河',
-        subtitle: '三臂旋臂',
-        shape: 'spiral',
-        bg: '#060A1A',
-        nebula1: 'rgba(90,70,220,0.32)',
-        nebula2: 'rgba(0,160,220,0.22)',
-        nebula3: 'rgba(255,100,200,0.12)',
-        coreGlow: 'rgba(255,230,170,0.16)',
-        vignette: 'rgba(3,6,18,0.55)',
-        core: '#FFE6B0',
-        tint: '#CFE3FF',
-        camera: { yaw: 0.55, pitch: -0.28, distance: 3.1 },
-      },
-      {
-        id: 'ring',
-        name: '环星云',
-        subtitle: '椭圆光环',
-        shape: 'ring',
-        bg: '#0B0718',
-        nebula1: 'rgba(255,79,163,0.28)',
-        nebula2: 'rgba(122,92,255,0.24)',
-        nebula3: 'rgba(0,212,255,0.12)',
-        coreGlow: 'rgba(255,160,220,0.16)',
-        vignette: 'rgba(12,2,16,0.58)',
-        core: '#FFD1E8',
-        tint: '#FFD9F0',
-        camera: { yaw: 0.2, pitch: -0.5, distance: 2.8 },
-      },
-      {
-        id: 'binary',
-        name: '双星系统',
-        subtitle: '双核轨道',
-        shape: 'binary',
-        bg: '#061018',
-        nebula1: 'rgba(47,128,255,0.3)',
-        nebula2: 'rgba(255,179,71,0.22)',
-        nebula3: 'rgba(0,229,255,0.12)',
-        coreGlow: 'rgba(255,214,140,0.16)',
-        vignette: 'rgba(2,8,16,0.56)',
-        core: '#FFF0C2',
-        tint: '#FFE0B0',
-        camera: { yaw: 0.85, pitch: -0.15, distance: 3.4 },
-      },
-      {
-        id: 'helix',
-        name: '双螺旋',
-        subtitle: 'DNA 光带',
-        shape: 'helix',
-        bg: '#04121A',
-        nebula1: 'rgba(0,229,195,0.28)',
-        nebula2: 'rgba(61,123,255,0.22)',
-        nebula3: 'rgba(182,255,107,0.1)',
-        coreGlow: 'rgba(150,255,230,0.15)',
-        vignette: 'rgba(0,10,12,0.55)',
-        core: '#C8FFF0',
-        tint: '#A8FFE6',
-        camera: { yaw: 0.3, pitch: 0.2, distance: 3 },
-      },
-      {
-        id: 'sphere',
-        name: '球状星团',
-        subtitle: '均匀球壳',
-        shape: 'sphere',
-        bg: '#0A0820',
-        nebula1: 'rgba(124,92,255,0.3)',
-        nebula2: 'rgba(53,200,255,0.2)',
-        nebula3: 'rgba(255,138,226,0.1)',
-        coreGlow: 'rgba(225,215,255,0.15)',
-        vignette: 'rgba(5,2,18,0.58)',
-        core: '#FFFFFF',
-        tint: '#D8CCFF',
-        camera: { yaw: 0.7, pitch: -0.2, distance: 3.6 },
-      },
-      {
-        id: 'pulsar',
-        name: '脉冲星网',
-        subtitle: '放射光刺',
-        shape: 'pulsar',
-        bg: '#120711',
-        nebula1: 'rgba(255,46,136,0.28)',
-        nebula2: 'rgba(255,179,0,0.2)',
-        nebula3: 'rgba(122,0,255,0.14)',
-        coreGlow: 'rgba(255,190,90,0.16)',
-        vignette: 'rgba(14,2,10,0.58)',
-        core: '#FFD36B',
-        tint: '#FFD1A8',
-        camera: { yaw: 0.4, pitch: -0.35, distance: 2.9 },
-      },
-      {
-        id: 'disk',
-        name: '薄盘星系',
-        subtitle: '扁平尘埃盘',
-        shape: 'disk',
-        bg: '#071018',
-        nebula1: 'rgba(0,184,212,0.28)',
-        nebula2: 'rgba(110,231,255,0.18)',
-        nebula3: 'rgba(255,184,107,0.1)',
-        coreGlow: 'rgba(180,240,255,0.15)',
-        vignette: 'rgba(0,8,12,0.55)',
-        core: '#E8FBFF',
-        tint: '#BFF4FF',
-        camera: { yaw: 1.05, pitch: -0.55, distance: 3.3 },
-      },
-      {
-        id: 'wave',
-        name: '星波',
-        subtitle: '流动光带',
-        shape: 'wave',
-        bg: '#05131C',
-        nebula1: 'rgba(0,212,255,0.28)',
-        nebula2: 'rgba(91,140,255,0.22)',
-        nebula3: 'rgba(0,255,198,0.12)',
-        coreGlow: 'rgba(120,240,255,0.15)',
-        vignette: 'rgba(0,10,16,0.55)',
-        core: '#A8F0FF',
-        tint: '#9FE8FF',
-        camera: { yaw: 0.2, pitch: -0.05, distance: 3.2 },
-      },
-      {
-        id: 'lattice',
-        name: '晶格星空',
-        subtitle: '三维网格',
-        shape: 'lattice',
-        bg: '#080A12',
-        nebula1: 'rgba(167,184,255,0.2)',
-        nebula2: 'rgba(94,107,255,0.18)',
-        nebula3: 'rgba(0,224,255,0.1)',
-        coreGlow: 'rgba(210,225,255,0.14)',
-        vignette: 'rgba(2,4,10,0.55)',
-        core: '#FFFFFF',
-        tint: '#DCE6FF',
-        camera: { yaw: 0.65, pitch: -0.3, distance: 3.8 },
-      },
-      {
-        id: 'vortex',
-        name: '漩涡',
-        subtitle: '漏斗星旋',
-        shape: 'vortex',
-        bg: '#120806',
-        nebula1: 'rgba(255,106,0,0.3)',
-        nebula2: 'rgba(255,46,99,0.22)',
-        nebula3: 'rgba(255,209,102,0.12)',
-        coreGlow: 'rgba(255,190,120,0.17)',
-        vignette: 'rgba(16,4,2,0.58)',
-        core: '#FFE1A8',
-        tint: '#FFD1B0',
-        camera: { yaw: 0.9, pitch: -0.25, distance: 3 },
-      },
-    ];
-
-    let activeGalaxyPreset = GALAXY_PRESETS[0];
-
-    function applyGalaxyPreset(id) {
-      if (typeof document === 'undefined') return;
-      const preset = GALAXY_PRESETS.find((item) => item.id === id) || GALAXY_PRESETS[0];
-      activeGalaxyPreset = preset;
-      const root = document.documentElement;
-      root.style.setProperty('--ms-canvas-bg', preset.bg);
-      root.style.setProperty('--ms-nebula-1', preset.nebula1);
-      root.style.setProperty('--ms-nebula-2', preset.nebula2);
-      root.style.setProperty('--ms-nebula-3', preset.nebula3);
-      root.style.setProperty('--ms-core-glow', preset.coreGlow);
-      root.style.setProperty('--ms-vignette', preset.vignette);
     }
 
     function hash01(value) {
@@ -236,104 +65,53 @@ window.__ModuleLoader__.load({
       return x - Math.floor(x);
     }
 
-    function buildGalaxyLayout(presetId, stars, width, height) {
-      const preset = GALAXY_PRESETS.find((item) => item.id === presetId) || GALAXY_PRESETS[0];
-      const shape = preset.shape;
+    function scatterTierCount(count) {
+      if (count > 60000) return 10;
+      if (count > 20000) return 8;
+      if (count > 2000) return 5;
+      return 1;
+    }
+
+    function buildScatterLayout(stars, width, height, threeD) {
       const count = stars.length;
+      const tierCount = scatterTierCount(count);
       const centerX = width / 2;
       const centerY = height / 2;
-      const radius = Math.min(width, height) * 0.44;
+      const maxRadius = Math.min(width, height) * 0.46;
+      const ranked = stars
+        .map((star) => ({
+          star,
+          weight: weightOf(star) + Number(star.importance ?? 0.5) * 0.6,
+        }))
+        .sort((a, b) => b.weight - a.weight);
       const positions = new Map();
-      for (let index = 0; index < count; index += 1) {
-        const star = stars[index];
-        const t = count <= 1 ? 0.5 : index / (count - 1);
-        const h = hash01(index + 1);
-        const h2 = hash01(index + 7);
-        let x = centerX;
-        let y = centerY;
+      ranked.forEach((entry, rank) => {
+        const t = count <= 1 ? 0 : rank / (count - 1);
+        const tier = Math.min(tierCount - 1, Math.floor(t * tierCount));
+        const h1 = hash01(rank * 3 + 1);
+        const h2 = hash01(rank * 3 + 2);
+        const h3 = hash01(rank * 3 + 3);
+        const radial = maxRadius * (0.92 - 0.58 * t) * (0.72 + 0.5 * h1);
+        const angle = h2 * Math.PI * 2;
+        let x;
+        let y;
         let z = 0;
-        if (shape === 'spiral') {
-          const r = Math.sqrt(t) * radius;
-          const angle = t * Math.PI * 6 + (index % 3) * ((Math.PI * 2) / 3);
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (h - 0.5) * radius * 0.16;
-        } else if (shape === 'ring') {
-          const angle = t * Math.PI * 2;
-          const r = radius * (0.78 + (h - 0.5) * 0.08);
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (h2 - 0.5) * radius * 0.12;
-        } else if (shape === 'binary') {
-          const lobe = index % 2 === 0 ? -1 : 1;
-          const localIndex = Math.floor(index / 2);
-          const localCount = Math.max(1, Math.ceil(count / 2));
-          const lt = localCount <= 1 ? 0.5 : localIndex / (localCount - 1);
-          const r = Math.sqrt(lt) * radius * 0.3;
-          const angle = lt * Math.PI * 4;
-          x = centerX + lobe * radius * 0.42 + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (h - 0.5) * radius * 0.35;
-        } else if (shape === 'helix') {
-          const strand = index % 2;
-          const angle = t * Math.PI * 10 + strand * Math.PI;
-          const r = radius * 0.34;
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (t - 0.5) * radius * 1.5;
-        } else if (shape === 'sphere') {
-          const phi = Math.acos(1 - (2 * (index + 0.5)) / count);
-          const theta = Math.PI * (1 + Math.sqrt(5)) * index;
-          const r = radius * 0.78;
-          x = centerX + Math.sin(phi) * Math.cos(theta) * r;
-          y = centerY + Math.sin(phi) * Math.sin(theta) * r;
-          z = Math.cos(phi) * r;
-        } else if (shape === 'pulsar') {
-          const spokes = 12;
-          const spoke = index % spokes;
-          const ringIndex = Math.floor(index / spokes);
-          const rings = Math.max(1, Math.ceil(count / spokes));
-          const r = radius * (0.15 + (0.85 * ringIndex) / Math.max(1, rings - 1));
-          const angle = (spoke / spokes) * Math.PI * 2;
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (h - 0.5) * radius * 0.28;
-        } else if (shape === 'disk') {
-          const angle = t * Math.PI * 5 + (h - 0.5) * 0.4;
-          const r = Math.sqrt(t) * radius;
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r * 0.55;
-          z = (h2 - 0.5) * radius * 0.4 + Math.sin(angle * 2) * radius * 0.04;
-        } else if (shape === 'wave') {
-          const strand = index % 3;
-          x = centerX + (t - 0.5) * radius * 1.7;
-          const angle = t * Math.PI * 8 + (strand * Math.PI * 2) / 3;
-          y = centerY + Math.sin(angle) * radius * 0.26;
-          z = Math.cos(angle) * radius * 0.26;
-        } else if (shape === 'lattice') {
-          const size = Math.max(2, Math.ceil(Math.cbrt(count)));
-          const gx = index % size;
-          const gy = Math.floor(index / size) % size;
-          const gz = Math.floor(index / (size * size));
-          const denom = Math.max(1, size - 1);
-          x = centerX + (gx / denom - 0.5) * radius * 1.7;
-          y = centerY + (gy / denom - 0.5) * radius * 1.7;
-          z = (gz / denom - 0.5) * radius * 1.7;
-        } else if (shape === 'vortex') {
-          const r = Math.pow(t, 1.4) * radius * 1.05;
-          const angle = t * Math.PI * 14 + (h - 0.5) * 0.3;
-          x = centerX + Math.cos(angle) * r;
-          y = centerY + Math.sin(angle) * r;
-          z = (0.5 - t) * radius * 0.9 - radius * 0.15;
+        if (threeD) {
+          const cosPhi = h3 * 2 - 1;
+          const sinPhi = Math.sqrt(Math.max(0, 1 - cosPhi * cosPhi));
+          x = centerX + Math.cos(angle) * sinPhi * radial;
+          y = centerY + Math.sin(angle) * sinPhi * radial;
+          z = cosPhi * radial;
+        } else {
+          x = centerX + Math.cos(angle) * radial;
+          y = centerY + Math.sin(angle) * radial * (0.75 + 0.35 * h3);
         }
-        positions.set(star.id, { x, y, z });
-      }
+        positions.set(entry.star.id, { x, y, z, tier });
+      });
       return positions;
     }
 
     applyTheme('dark');
-    applyGalaxyPreset('spiral');
-
     function starDepth(star, width, height) {
       const id = String(star?.id || star?.title || '');
       let hash = 2166136261;
@@ -646,8 +424,9 @@ void main() {
       const lineColorLoc = gl.getUniformLocation(lineProgram, 'u_color');
 
       return {
+        kind: '2d',
         canvas,
-        draw(width, height, dpr, positions, edges) {
+        draw(width, height, dpr, positions, edges, zoom = 1) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
           const pixelHeight = Math.max(1, Math.floor(height * dpr));
           if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
@@ -657,15 +436,25 @@ void main() {
           gl.clear(gl.COLOR_BUFFER_BIT);
           gl.enable(gl.BLEND);
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          const scale = Math.max(1, Math.min(4, Number(zoom) || 1));
+          const centerX = width / 2;
+          const centerY = height / 2;
+          const project = (x, y) => ({
+            x: (x - centerX) * scale + centerX,
+            y: (y - centerY) * scale + centerY,
+          });
+          const projected = [];
 
           if (edges.length) {
             const lineData = new Float32Array(edges.length * 4);
             let cursor = 0;
             for (const edge of edges) {
-              lineData[cursor++] = edge.from.x * dpr;
-              lineData[cursor++] = edge.from.y * dpr;
-              lineData[cursor++] = edge.to.x * dpr;
-              lineData[cursor++] = edge.to.y * dpr;
+              const from = project(edge.from.x, edge.from.y);
+              const to = project(edge.to.x, edge.to.y);
+              lineData[cursor++] = from.x * dpr;
+              lineData[cursor++] = from.y * dpr;
+              lineData[cursor++] = to.x * dpr;
+              lineData[cursor++] = to.y * dpr;
             }
             gl.useProgram(lineProgram);
             gl.uniform2f(lineResLoc, pixelWidth, pixelHeight);
@@ -684,13 +473,15 @@ void main() {
             positions.forEach((item, index) => {
               const weight = weightOf(item.star);
               const radius = 3.5 + 9 * Number(item.star.importance ?? 0.5) * weight;
-              positionData[index * 2] = item.x * dpr;
-              positionData[index * 2 + 1] = item.y * dpr;
+              const point = project(item.x, item.y);
+              positionData[index * 2] = point.x * dpr;
+              positionData[index * 2 + 1] = point.y * dpr;
               sizeData[index] = Math.max(2, radius * 2 * dpr);
               const rgb = hexToRgb(TYPE_COLOR[item.star.type] || '#CFE3FF');
               colorData[index * 3] = rgb[0];
               colorData[index * 3 + 1] = rgb[1];
               colorData[index * 3 + 2] = rgb[2];
+              projected.push({ ...item, x: point.x, y: point.y });
             });
             gl.useProgram(starProgram);
             gl.uniform2f(starResLoc, pixelWidth, pixelHeight);
@@ -703,6 +494,7 @@ void main() {
             gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
             gl.drawArrays(gl.POINTS, 0, count);
           }
+          return projected;
         },
       };
     }
@@ -840,22 +632,16 @@ void main() {
       const lineVpLoc = gl.getUniformLocation(lineProgram, 'u_viewProjection');
       const lineColorLoc = gl.getUniformLocation(lineProgram, 'u_color');
 
-      const initialCamera = activeGalaxyPreset?.camera || {
+      const camera = {
         yaw: 0.55,
         pitch: -0.28,
-        distance: 3.1,
-      };
-      const camera = {
-        yaw: initialCamera.yaw,
-        pitch: initialCamera.pitch,
-        distance: initialCamera.distance,
+        distance: 3.4,
         target: [0, 0, 0],
         autoRotate: true,
         dragging: false,
         velocityYaw: 0,
         velocityPitch: 0,
         lastTime: 0,
-        orbitPhase: 0,
       };
 
       function perspective(fovy, aspect, near, far) {
@@ -929,7 +715,6 @@ void main() {
           camera.lastTime = time;
           if (camera.autoRotate && !camera.dragging) {
             camera.yaw += dt * 0.16;
-            camera.orbitPhase += dt * 0.22;
           }
           camera.yaw += camera.velocityYaw;
           camera.pitch = Math.max(
@@ -965,16 +750,17 @@ void main() {
           camera.velocityPitch = 0;
         },
         reset() {
-          const presetCamera = activeGalaxyPreset?.camera || { yaw: 0.55, pitch: -0.28, distance: 3.1 };
-          camera.yaw = presetCamera.yaw;
-          camera.pitch = presetCamera.pitch;
-          camera.distance = presetCamera.distance;
+          camera.yaw = 0.55;
+          camera.pitch = -0.28;
+          camera.distance = 3.4;
           camera.target = [0, 0, 0];
           camera.autoRotate = true;
           camera.dragging = false;
           camera.velocityYaw = 0;
           camera.velocityPitch = 0;
-          camera.orbitPhase = 0;
+        },
+        getRevealLevel() {
+          return Math.max(0, Math.min(1, (3.6 - camera.distance) / (3.6 - 1.2)));
         },
         draw(width, height, dpr, positions, edges) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
@@ -998,19 +784,6 @@ void main() {
           const view = lookAt(eye, target, [0, 1, 0]);
           const projection = perspective(Math.PI / 4, width / height, 0.1, 20);
           const viewProjection = multiply(projection, view);
-          const orbit = (x, y, z) => {
-            const dx = x - width / 2;
-            const dy = y - height / 2;
-            const radius = Math.hypot(dx, dy) / minDim;
-            const angle = camera.orbitPhase / (0.35 + radius * 2.2);
-            const cos = Math.cos(angle);
-            const sin = Math.sin(angle);
-            return {
-              x: width / 2 + dx * cos - dy * sin,
-              y: height / 2 + dx * sin + dy * cos,
-              z,
-            };
-          };
           const project = (x, y, z) => {
             const nx = (x - width / 2) / minDim;
             const ny = -(y - height / 2) / minDim;
@@ -1051,10 +824,8 @@ void main() {
           if (edges.length) {
             const lineValues = [];
             for (const edge of edges) {
-              const fromWorld = orbit(edge.from.x, edge.from.y, edge.from.z);
-              const toWorld = orbit(edge.to.x, edge.to.y, edge.to.z);
-              const from = project(fromWorld.x, fromWorld.y, fromWorld.z);
-              const to = project(toWorld.x, toWorld.y, toWorld.z);
+              const from = project(edge.from.x, edge.from.y, edge.from.z);
+              const to = project(edge.to.x, edge.to.y, edge.to.z);
               if (!from.visible || !to.visible) continue;
               lineValues.push(from.nx, from.ny, from.nz, to.nx, to.ny, to.nz);
             }
@@ -1072,9 +843,6 @@ void main() {
 
           const count = positions.length;
           const heavy = count > 20000;
-          const presetTint = activeGalaxyPreset?.tint
-            ? hexToRgb(activeGalaxyPreset.tint)
-            : null;
           if (count) {
             const positionData = new Float32Array(count * 3);
             const sizeData = new Float32Array(count);
@@ -1082,8 +850,7 @@ void main() {
             const phaseData = new Float32Array(count);
             const projected = [];
             positions.forEach((item, index) => {
-              const world = orbit(item.x, item.y, item.z);
-              const point = project(world.x, world.y, world.z);
+              const point = project(item.x, item.y, item.z);
               const weight = heavy ? 0.5 : weightOf(item.star);
               const radius = heavy
                 ? 2.2 + 3 * Number(item.star.importance ?? 0.5)
@@ -1093,15 +860,9 @@ void main() {
               positionData[index * 3 + 2] = point.nz;
               sizeData[index] = point.visible ? Math.max(2, radius * 2) : 0;
               const rgb = hexToRgb(TYPE_COLOR[item.star.type] || '#CFE3FF');
-              colorData[index * 3] = presetTint
-                ? rgb[0] * 0.65 + presetTint[0] * 0.35
-                : rgb[0];
-              colorData[index * 3 + 1] = presetTint
-                ? rgb[1] * 0.65 + presetTint[1] * 0.35
-                : rgb[1];
-              colorData[index * 3 + 2] = presetTint
-                ? rgb[2] * 0.65 + presetTint[2] * 0.35
-                : rgb[2];
+              colorData[index * 3] = rgb[0];
+              colorData[index * 3 + 1] = rgb[1];
+              colorData[index * 3 + 2] = rgb[2];
               const id = String(item.star.id || '');
               let hash = 0;
               for (let cursor = 0; cursor < id.length; cursor += 1) {
@@ -1112,9 +873,9 @@ void main() {
                 ...item,
                 x: point.sx,
                 y: point.sy,
-                worldX: world.x,
-                worldY: world.y,
-                worldZ: world.z,
+                worldX: item.x,
+                worldY: item.y,
+                worldZ: item.z,
                 depth: point.depth,
                 visible: point.visible,
               });
@@ -1170,53 +931,6 @@ void main() {
         surface.stroke();
       }
       const byId = new Map(positions.map((item) => [item.star.id, item]));
-      const coreX = width / 2;
-      const coreY = height / 2;
-      const coreRadius = Math.min(width, height) * 0.11;
-      const pulse = 0.96 + 0.04 * Math.sin(Date.now() / 1000 / 1.6);
-      const coreColor = activeGalaxyPreset?.core || '#FFE6B0';
-      const accentColor = activeGalaxyPreset?.tint || '#7FD8FF';
-      const coreGlow = surface.createRadialGradient(
-        coreX,
-        coreY,
-        0,
-        coreX,
-        coreY,
-        coreRadius * 2.6 * pulse,
-      );
-      coreGlow.addColorStop(0, 'rgba(255,255,255,0.92)');
-      coreGlow.addColorStop(0.08, hexAlpha(coreColor, 0.7));
-      coreGlow.addColorStop(0.22, hexAlpha(accentColor, 0.28));
-      coreGlow.addColorStop(1, hexAlpha(accentColor, 0));
-      surface.fillStyle = coreGlow;
-      surface.beginPath();
-      surface.arc(coreX, coreY, coreRadius * 2.6 * pulse, 0, Math.PI * 2);
-      surface.fill();
-      for (let ring = 0; ring < 3; ring += 1) {
-        surface.strokeStyle = hexAlpha(accentColor, 0.12 - ring * 0.03);
-        surface.lineWidth = 1;
-        surface.beginPath();
-        surface.arc(coreX, coreY, coreRadius * (1.15 + ring * 0.42) * pulse, 0, Math.PI * 2);
-        surface.stroke();
-      }
-      for (let ray = 0; ray < 8; ray += 1) {
-        const angle = (ray / 8) * Math.PI * 2 + Date.now() / 12000;
-        surface.strokeStyle = hexAlpha(accentColor, 0.07);
-        surface.beginPath();
-        surface.moveTo(
-          coreX + Math.cos(angle) * coreRadius * 1.15,
-          coreY + Math.sin(angle) * coreRadius * 1.15,
-        );
-        surface.lineTo(
-          coreX + Math.cos(angle) * coreRadius * 2.1,
-          coreY + Math.sin(angle) * coreRadius * 2.1,
-        );
-        surface.stroke();
-      }
-      surface.fillStyle = 'rgba(255,255,255,0.95)';
-      surface.beginPath();
-      surface.arc(coreX, coreY, Math.max(2, coreRadius * 0.08), 0, Math.PI * 2);
-      surface.fill();
       for (const [index, constellation] of (constellations || []).entries()) {
         const members = (constellation.starIds || [])
           .map((starId) => byId.get(starId))
@@ -1344,6 +1058,9 @@ void main() {
       const hoveredIdRef = React.useRef(null);
       const [hovered, setHovered] = React.useState(null);
       const [autoRotate, setAutoRotate] = React.useState(true);
+      const [revealTier, setRevealTier] = React.useState(0);
+      const [zoom2d, setZoom2d] = React.useState(1);
+      const tierCount = scatterTierCount((data?.stars || []).length);
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1376,8 +1093,7 @@ void main() {
 
       React.useEffect(() => {
         applyTheme(settings?.theme || 'dark');
-        applyGalaxyPreset(settings?.galaxyPreset || 'spiral');
-      }, [settings?.theme, settings?.galaxyPreset]);
+      }, [settings?.theme]);
 
       const loadMap = React.useCallback(
         (mapId) => {
@@ -1440,21 +1156,21 @@ void main() {
         const active = (data?.stars || []).filter((star) => star.status === 'active');
         const width = size.width;
         const height = size.height;
-        const presetInitial = buildGalaxyLayout(
-          settings?.galaxyPreset || 'spiral',
+        const scatterInitial = buildScatterLayout(
           active,
           width,
           height,
+          settings?.viewMode !== '2d',
         );
-        const presetState = layoutRef.current;
-        presetState.positions = presetInitial;
-        if (presetState.worker) {
-          presetState.worker.terminate();
-          presetState.worker = null;
+        const scatterState = layoutRef.current;
+        scatterState.positions = scatterInitial;
+        if (scatterState.worker) {
+          scatterState.worker.terminate();
+          scatterState.worker = null;
         }
-        if (presetState.url) {
-          URL.revokeObjectURL(presetState.url);
-          presetState.url = null;
+        if (scatterState.url) {
+          URL.revokeObjectURL(scatterState.url);
+          scatterState.url = null;
         }
         setLayoutVersion((version) => version + 1);
         return undefined;
@@ -1568,13 +1284,13 @@ void main() {
             state.url = null;
           }
         };
-      }, [data, size.width, size.height, settings?.galaxyPreset]);
+      }, [data, size.width, size.height, settings?.viewMode]);
 
       React.useEffect(() => {
         const canvas = canvasRef.current;
         const viewMode = settings?.viewMode === '2d' ? '2d' : '3d';
         const canSwitch = maps.length > 1;
-        if (!canvas || (viewMode === '2d' && !(immersive && canSwitch))) return undefined;
+        if (!canvas) return undefined;
         const switchMap = (deltaY) => {
           const index = maps.findIndex((map) => map.id === activeId);
           if (index < 0) return;
@@ -1585,22 +1301,33 @@ void main() {
           }
         };
         const onWheel = (event) => {
+          event.preventDefault();
+          if (event.ctrlKey && canSwitch) {
+            switchMap(event.deltaY);
+            return;
+          }
           if (viewMode !== '2d') {
-            event.preventDefault();
-            if (event.ctrlKey && canSwitch) {
-              switchMap(event.deltaY);
-              return;
-            }
             glRef.current.renderer?.zoom?.(event.deltaY);
+            const level = glRef.current.renderer?.getRevealLevel?.() ?? 0;
+            setRevealTier(Math.floor(level * Math.max(0, tierCount - 1)));
             drawRef.current?.();
             return;
           }
-          event.preventDefault();
-          switchMap(event.deltaY);
+          const next = Math.max(
+            1,
+            Math.min(4, zoom2d * (event.deltaY > 0 ? 0.85 : 1.18)),
+          );
+          setZoom2d(next);
+          setRevealTier(
+            Math.min(
+              tierCount - 1,
+              Math.floor(((next - 1) / 3) * Math.max(0, tierCount - 1)),
+            ),
+          );
         };
         canvas.addEventListener('wheel', onWheel, { passive: false });
         return () => canvas.removeEventListener('wheel', onWheel);
-      }, [immersive, maps, activeId, settings?.viewMode]);
+      }, [immersive, maps, activeId, settings?.viewMode, zoom2d, tierCount]);
 
       React.useEffect(() => {
         if (!mapToast) return undefined;
@@ -1631,8 +1358,11 @@ void main() {
         if (glRenderer) {
           canvas.style.width = `${width}px`;
           canvas.style.height = `${height}px`;
+          const stored = layoutRef.current.positions;
           const stars = (data?.stars || []).filter((star) => {
             if (star.status !== 'active') return false;
+            const tier = stored.get(star.id)?.tier ?? 0;
+            if (tier > revealTier) return false;
             const queryText = query.trim().toLowerCase();
             if (!queryText) return true;
             const haystack = [star.title, star.fact, star.reason, star.condition, (star.tags || []).join(' ')]
@@ -1641,7 +1371,6 @@ void main() {
               .toLowerCase();
             return haystack.includes(queryText);
           });
-          const stored = layoutRef.current.positions;
           const centerX = width / 2;
           const centerY = height / 2;
           const radius = Math.min(width, height) * 0.34;
@@ -1671,7 +1400,14 @@ void main() {
               ? '没有找到相关记忆。'
               : '这片星域还空着。去对话里让 AI 记住一件事。';
           const renderFrame = () => {
-            const projected = glRenderer.draw(width, height, dpr, positions, edgePairs);
+            const projected = glRenderer.draw(
+              width,
+              height,
+              dpr,
+              positions,
+              edgePairs,
+              mode === '2d' ? zoom2d : 1,
+            );
             const displayPositions = projected || positions;
             positionsRef.current = displayPositions;
             drawLabels(
@@ -1791,7 +1527,7 @@ void main() {
           surface.fillText(emptyText, width / 2, height / 2);
           surface.textAlign = 'start';
         }
-      }, [data, selectedId, query, size, layoutVersion, settings?.viewMode]);
+      }, [data, selectedId, query, size, layoutVersion, settings?.viewMode, revealTier, zoom2d]);
 
       React.useEffect(() => {
         if (settings?.viewMode === '2d') return undefined;
@@ -1819,11 +1555,20 @@ void main() {
       }, [autoRotate, settings?.viewMode]);
 
       React.useEffect(() => {
+        setRevealTier(0);
+        setZoom2d(1);
+      }, [activeId, settings?.viewMode]);
+
+      React.useEffect(() => {
+        setRevealTier((current) => Math.min(current, Math.max(0, tierCount - 1)));
+      }, [tierCount]);
+
+      React.useEffect(() => {
         if (glRef.current.renderer?.reset) {
           glRef.current.renderer.reset();
           drawRef.current?.();
         }
-      }, [settings?.galaxyPreset]);
+      }, [settings?.viewMode]);
 
       function handlePointerDown(event) {
         if (settings?.viewMode === '2d' || event.button !== 0) return;
@@ -1918,7 +1663,13 @@ void main() {
         setAutoRotate(false);
         glRef.current.renderer?.setAutoRotate?.(false);
         glRef.current.renderer?.focusItem?.(best, size.width, size.height);
+        syncRevealFromRenderer();
         drawRef.current?.();
+      }
+
+      function syncRevealFromRenderer() {
+        const level = glRef.current.renderer?.getRevealLevel?.() ?? 0;
+        setRevealTier(Math.floor(level * Math.max(0, tierCount - 1)));
       }
 
       function focusSelected() {
@@ -1927,6 +1678,7 @@ void main() {
         setAutoRotate(false);
         glRef.current.renderer?.setAutoRotate?.(false);
         glRef.current.renderer?.focusItem?.(item, size.width, size.height);
+        syncRevealFromRenderer();
         drawRef.current?.();
       }
 
@@ -1952,12 +1704,14 @@ void main() {
         if (key === '+' || key === '=') {
           event.preventDefault();
           renderer.zoom(-1);
+          syncRevealFromRenderer();
           drawRef.current?.();
           return;
         }
         if (key === '-' || key === '_') {
           event.preventDefault();
           renderer.zoom(1);
+          syncRevealFromRenderer();
           drawRef.current?.();
           return;
         }
@@ -1965,6 +1719,8 @@ void main() {
           event.preventDefault();
           renderer.reset?.();
           setAutoRotate(true);
+          setRevealTier(0);
+          setZoom2d(1);
           drawRef.current?.();
           return;
         }
@@ -2345,7 +2101,7 @@ void main() {
           'style',
           null,
           `
-.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;mix-blend-mode:screen;background:radial-gradient(circle at 50% 50%,var(--ms-core-glow),transparent 30%),radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
+.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;mix-blend-mode:screen;background:radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
 .ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(34px);opacity:.32;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 32%,var(--ms-nebula-2),transparent 68%,var(--ms-nebula-3),transparent);animation:ms-spin 90s linear infinite}
 .ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(200,220,255,.45) 1px,transparent 1px),radial-gradient(circle,rgba(255,255,255,.28) 1px,transparent 1px);background-size:97px 97px,151px 151px;background-position:0 0,40px 60px;opacity:.35}
 .ms-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;background:radial-gradient(circle at 50% 45%,transparent 38%,var(--ms-vignette) 100%)}
@@ -2518,7 +2274,7 @@ void main() {
         ),
         h(
           'div',
-          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: 'var(--ms-canvas-bg)' } },
+          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: 'var(--ms-bg)' } },
           h('div', { className: 'ms-nebula', 'aria-hidden': true }),
           h('canvas', {
             ref: canvasRef,
@@ -2559,23 +2315,25 @@ void main() {
             },
           }),
           h('div', { className: 'ms-vignette', 'aria-hidden': true }),
-          settings?.viewMode !== '2d'
-            ? h(
-                'div',
-                {
-                  style: {
-                    position: 'absolute',
-                    top: '12px',
-                    left: '12px',
-                    fontSize: '10px',
-                    opacity: 0.45,
-                    pointerEvents: 'none',
-                    zIndex: 4,
-                  },
-                },
-                '拖动/方向键旋转 · 滚轮缩放 · Ctrl+滚轮切图 · 双击聚焦',
-              )
-            : null,
+          h(
+            'div',
+            {
+              style: {
+                position: 'absolute',
+                top: '12px',
+                left: '12px',
+                fontSize: '10px',
+                opacity: 0.45,
+                pointerEvents: 'none',
+                zIndex: 4,
+              },
+            },
+            `${
+              settings?.viewMode === '2d'
+                ? '滚轮放大'
+                : '拖动/方向键旋转 · 滚轮缩放 · 双击聚焦'
+            } · 逐步显示 ${Math.min(revealTier + 1, tierCount)}/${tierCount} 层 · Ctrl+滚轮切图`,
+          ),
           settings?.viewMode !== '2d'
             ? h(
                 'div',
@@ -2618,6 +2376,8 @@ void main() {
                     onClick: () => {
                       glRef.current.renderer?.reset?.();
                       setAutoRotate(true);
+                      setRevealTier(0);
+                      setZoom2d(1);
                       drawRef.current?.();
                     },
                     style: {
@@ -2639,14 +2399,7 @@ void main() {
                     type: 'button',
                     disabled: !selected,
                     onClick: () => {
-                      const item = positionsRef.current.find(
-                        (entry) => entry.star.id === selected?.id,
-                      );
-                      if (!item) return;
-                      setAutoRotate(false);
-                      glRef.current.renderer?.setAutoRotate?.(false);
-                      glRef.current.renderer?.focusItem?.(item, size.width, size.height);
-                      drawRef.current?.();
+                      focusSelected();
                     },
                     style: {
                       padding: '4px 10px',
@@ -3967,8 +3720,7 @@ void main() {
 
       React.useEffect(() => {
         applyTheme(settings?.theme || 'dark');
-        applyGalaxyPreset(settings?.galaxyPreset || 'spiral');
-      }, [settings?.theme, settings?.galaxyPreset]);
+      }, [settings?.theme]);
 
       function update(patch) {
         const next = { ...settings, ...patch };
@@ -4253,55 +4005,6 @@ void main() {
             },
             h('option', { value: 'dark' }, '深色'),
             h('option', { value: 'light' }, '浅色'),
-          ),
-        ),
-        h(
-          'div',
-          { style: { margin: '4px 0 14px' } },
-          h(
-            'div',
-            { style: { fontSize: '12px', opacity: 0.78, marginBottom: '8px' } },
-            '星图风格',
-          ),
-          h(
-            'div',
-            {
-              style: {
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-                gap: '8px',
-              },
-            },
-            ...GALAXY_PRESETS.map((preset) => {
-              const active = (settings.galaxyPreset || 'spiral') === preset.id;
-              return h(
-                'button',
-                {
-                  key: preset.id,
-                  type: 'button',
-                  'aria-pressed': active,
-                  onClick: () => update({ galaxyPreset: preset.id }),
-                  style: {
-                    padding: '9px',
-                    borderRadius: '10px',
-                    border: active
-                      ? '1px solid var(--ms-accent)'
-                      : '1px solid var(--ms-border)',
-                    background: `linear-gradient(135deg, ${preset.bg}, ${preset.nebula1})`,
-                    color: '#fff',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    boxShadow: active ? '0 0 18px rgba(127,216,255,0.22)' : 'none',
-                  },
-                },
-                h('div', { style: { fontSize: '12px', fontWeight: 600 } }, preset.name),
-                h(
-                  'div',
-                  { style: { fontSize: '10px', opacity: 0.72, marginTop: '2px' } },
-                  preset.subtitle,
-                ),
-              );
-            }),
           ),
         ),
         field(
