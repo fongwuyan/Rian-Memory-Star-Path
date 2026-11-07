@@ -220,6 +220,7 @@ export function apply(ctx) {
   const recallCache = new Map();
   const turnTrace = new Map();
   const recentRecalls = new Map();
+  const recallLog = new Map();
   const saveTimers = new Map();
   const indexCache = new Map();
   const dirtyIndex = new Set();
@@ -1404,6 +1405,19 @@ export function apply(ctx) {
           result = recallForAgent(agent, mapId, query, payload.turn);
         }
         recallCache.set(agent.id, result.text);
+        const entries = recallLog.get(agent.id) || [];
+        entries.push({
+          turn: payload.turn,
+          step: payload.step,
+          at: nowIso(),
+          count: result.count,
+          starIds: result.starIds,
+          text: result.text,
+          mode: isFirst ? 'brief' : 'recall',
+          mapId,
+        });
+        if (entries.length > 30) entries.shift();
+        recallLog.set(agent.id, entries);
         if (result.count) recordTurn(agent.id, payload.turn, 'recalled', result.count);
       } catch (error) {
         console.error('[memory-star] pre-step failed', error);
@@ -1415,6 +1429,7 @@ export function apply(ctx) {
       if (payload?.agent?.id) {
         recallCache.delete(payload.agent.id);
         recentRecalls.delete(payload.agent.id);
+        recallLog.delete(payload.agent.id);
       }
     });
   }
@@ -1998,6 +2013,15 @@ export function apply(ctx) {
             HALF_LIFE_DAYS = Number(settings.halfLifeDays) || 45;
             await persistSettings();
             sendJson(res, 200, { settings });
+            return;
+          }
+
+          if (method === 'GET' && parts[0] === 'recall-log') {
+            const sessionId = url.searchParams.get('sessionId') || '';
+            sendJson(res, 200, {
+              sessionId,
+              entries: recallLog.get(sessionId) || [],
+            });
             return;
           }
 
