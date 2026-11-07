@@ -92,8 +92,11 @@ window.__ModuleLoader__.load({
         const h1 = hash01(rank * 3 + 1);
         const h2 = hash01(rank * 3 + 2);
         const h3 = hash01(rank * 3 + 3);
-        const radial = maxRadius * (0.92 - 0.58 * t) * (0.72 + 0.5 * h1);
-        const angle = h2 * Math.PI * 2;
+        const spread = Math.sqrt(h1);
+        const weightBias = (1 - t) * 0.22;
+        const radial =
+          maxRadius * Math.min(0.98, 0.42 + 0.5 * spread + weightBias);
+        const angle = rank * 2.399963 + (h2 - 0.5) * 0.35;
         let x;
         let y;
         let z = 0;
@@ -105,7 +108,7 @@ window.__ModuleLoader__.load({
           z = cosPhi * radial;
         } else {
           x = centerX + Math.cos(angle) * radial;
-          y = centerY + Math.sin(angle) * radial * (0.75 + 0.35 * h3);
+          y = centerY + Math.sin(angle) * radial;
         }
         positions.set(entry.star.id, { x, y, z, tier });
       });
@@ -427,7 +430,7 @@ void main() {
       return {
         kind: '2d',
         canvas,
-        draw(width, height, dpr, positions, edges, zoom = 1) {
+        draw(width, height, dpr, positions, edges, zoom = 1, panX = 0, panY = 0) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
           const pixelHeight = Math.max(1, Math.floor(height * dpr));
           if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
@@ -437,12 +440,12 @@ void main() {
           gl.clear(gl.COLOR_BUFFER_BIT);
           gl.enable(gl.BLEND);
           gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-          const scale = Math.max(1, Math.min(4, Number(zoom) || 1));
+          const scale = Math.max(0.2, Math.min(16, Number(zoom) || 1));
           const centerX = width / 2;
           const centerY = height / 2;
           const project = (x, y) => ({
-            x: (x - centerX) * scale + centerX,
-            y: (y - centerY) * scale + centerY,
+            x: (x - centerX) * scale + centerX + panX,
+            y: (y - centerY) * scale + centerY + panY,
           });
           const projected = [];
 
@@ -727,8 +730,8 @@ void main() {
         },
         zoom(delta) {
           camera.distance = Math.max(
-            1.2,
-            Math.min(6, camera.distance * (delta > 0 ? 1.08 : 0.92)),
+            0.015,
+            camera.distance * (delta > 0 ? 1.08 : 0.92),
           );
         },
         setAutoRotate(value) {
@@ -761,7 +764,10 @@ void main() {
           camera.velocityPitch = 0;
         },
         getRevealLevel() {
-          return Math.max(0, Math.min(1, (3.6 - camera.distance) / (3.6 - 1.2)));
+          if (camera.distance >= 3.6) return 0;
+          const level =
+            Math.log(3.6 / camera.distance) / Math.log(3.6 / 0.25);
+          return Math.max(0, Math.min(1, level));
         },
         draw(width, height, dpr, positions, edges) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
@@ -783,7 +789,9 @@ void main() {
             target[2] + Math.cos(camera.yaw) * cosPitch * camera.distance,
           ];
           const view = lookAt(eye, target, [0, 1, 0]);
-          const projection = perspective(Math.PI / 4, width / height, 0.1, 20);
+          const near = Math.max(0.0005, camera.distance * 0.004);
+          const far = Math.max(80, camera.distance * 40);
+          const projection = perspective(Math.PI / 4, width / height, near, far);
           const viewProjection = multiply(projection, view);
           const project = (x, y, z) => {
             const nx = (x - width / 2) / minDim;
@@ -1059,6 +1067,7 @@ void main() {
       const hoveredIdRef = React.useRef(null);
       const loadingMoreRef = React.useRef(false);
       const pendingFullLoadRef = React.useRef('');
+      const pan2dRef = React.useRef({ x: 0, y: 0 });
       const [hovered, setHovered] = React.useState(null);
       const [autoRotate, setAutoRotate] = React.useState(true);
       const [revealTier, setRevealTier] = React.useState(0);
@@ -1504,6 +1513,8 @@ void main() {
               positions,
               edgePairs,
               mode === '2d' ? zoom2d : 1,
+              mode === '2d' ? pan2dRef.current.x : 0,
+              mode === '2d' ? pan2dRef.current.y : 0,
             );
             const displayPositions = projected || positions;
             positionsRef.current = displayPositions;
@@ -1654,6 +1665,7 @@ void main() {
       React.useEffect(() => {
         setRevealTier(0);
         setZoom2d(1);
+        pan2dRef.current = { x: 0, y: 0 };
       }, [activeId, settings?.viewMode]);
 
       React.useEffect(() => {
@@ -1668,15 +1680,17 @@ void main() {
       }, [settings?.viewMode]);
 
       function handlePointerDown(event) {
-        if (settings?.viewMode === '2d' || event.button !== 0) return;
+        if (event.button !== 0) return;
         dragRef.current = {
           active: true,
           lastX: event.clientX,
           lastY: event.clientY,
           moved: 0,
         };
-        hoveredIdRef.current = null;
-        setHovered(null);
+        if (settings?.viewMode !== '2d') {
+          hoveredIdRef.current = null;
+          setHovered(null);
+        }
         event.currentTarget.focus?.();
         event.currentTarget.style.cursor = 'grabbing';
         event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -1716,6 +1730,14 @@ void main() {
         dragRef.current.lastX = event.clientX;
         dragRef.current.lastY = event.clientY;
         dragRef.current.moved += Math.abs(dx) + Math.abs(dy);
+        if (settings?.viewMode === '2d') {
+          pan2dRef.current = {
+            x: pan2dRef.current.x + dx,
+            y: pan2dRef.current.y + dy,
+          };
+          drawRef.current?.();
+          return;
+        }
         const renderer = glRef.current.renderer;
         if (renderer?.orbit) {
           renderer.orbit(dx, dy);
@@ -2391,7 +2413,7 @@ void main() {
               height: '100%',
               position: 'relative',
               zIndex: 1,
-              cursor: settings?.viewMode === '2d' ? (immersive ? 'default' : 'crosshair') : 'grab',
+              cursor: 'grab',
               background:
                 settings?.viewMode === '2d'
                   ? 'linear-gradient(135deg, #0B1026, #131A3A)'
@@ -2428,8 +2450,8 @@ void main() {
             },
             `${
               settings?.viewMode === '2d'
-                ? '滚轮放大'
-                : '拖动/方向键旋转 · 滚轮缩放 · 双击聚焦'
+                ? `拖动平移 · 滚轮放大 ${zoom2d.toFixed(1)}×`
+                : '拖动/方向键旋转 · 无限缩放 · 双击聚焦'
             } · 逐步显示 ${Math.min(revealTier + 1, tierCount)}/${tierCount} 层 · Ctrl+滚轮切图`,
           ),
           settings?.viewMode !== '2d'
@@ -2511,6 +2533,50 @@ void main() {
                     },
                   },
                   '聚焦选中',
+                ),
+              )
+            : null,
+          settings?.viewMode === '2d'
+            ? h(
+                'div',
+                {
+                  style: {
+                    position: 'absolute',
+                    left: '12px',
+                    bottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    zIndex: 4,
+                  },
+                },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    onClick: () => {
+                      pan2dRef.current = { x: 0, y: 0 };
+                      setZoom2d(1);
+                      setRevealTier(0);
+                      drawRef.current?.();
+                    },
+                    style: {
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      opacity: 0.86,
+                    },
+                  },
+                  '重置视图',
+                ),
+                h(
+                  'span',
+                  { style: { fontSize: '10px', opacity: 0.55 } },
+                  `${zoom2d.toFixed(1)}×`,
                 ),
               )
             : null,
