@@ -432,17 +432,22 @@ void main() {
 in vec3 a_position;
 in float a_size;
 in vec3 a_color;
+in float a_phase;
 uniform mat4 u_viewProjection;
 uniform float u_dpr;
+uniform float u_time;
+uniform float u_sizeScale;
+uniform float u_alpha;
 out vec3 v_color;
 out float v_alpha;
 void main() {
   vec4 clip = u_viewProjection * vec4(a_position, 1.0);
   gl_Position = clip;
   float depth = max(0.2, clip.w);
-  gl_PointSize = clamp(a_size * u_dpr * (1.8 / depth), 1.0, 48.0);
+  float twinkle = 0.88 + 0.12 * sin(u_time * 1.6 + a_phase);
+  gl_PointSize = clamp(a_size * u_dpr * (1.8 / depth) * u_sizeScale * twinkle, 1.0, 64.0);
   v_color = a_color;
-  v_alpha = clamp(1.8 / depth, 0.2, 1.0);
+  v_alpha = clamp(1.8 / depth, 0.2, 1.0) * u_alpha * twinkle;
 }`;
 
       const starFS = `#version 300 es
@@ -512,10 +517,12 @@ void main() {
       const starPosBuffer = gl.createBuffer();
       const starSizeBuffer = gl.createBuffer();
       const starColorBuffer = gl.createBuffer();
+      const starPhaseBuffer = gl.createBuffer();
       gl.bindVertexArray(starVao);
       const starPosLoc = gl.getAttribLocation(starProgram, 'a_position');
       const starSizeLoc = gl.getAttribLocation(starProgram, 'a_size');
       const starColorLoc = gl.getAttribLocation(starProgram, 'a_color');
+      const starPhaseLoc = gl.getAttribLocation(starProgram, 'a_phase');
       gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
       gl.enableVertexAttribArray(starPosLoc);
       gl.vertexAttribPointer(starPosLoc, 3, gl.FLOAT, false, 0, 0);
@@ -525,6 +532,9 @@ void main() {
       gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
       gl.enableVertexAttribArray(starColorLoc);
       gl.vertexAttribPointer(starColorLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, starPhaseBuffer);
+      gl.enableVertexAttribArray(starPhaseLoc);
+      gl.vertexAttribPointer(starPhaseLoc, 1, gl.FLOAT, false, 0, 0);
 
       const lineVao = gl.createVertexArray();
       const lineBuffer = gl.createBuffer();
@@ -537,10 +547,23 @@ void main() {
 
       const starVpLoc = gl.getUniformLocation(starProgram, 'u_viewProjection');
       const starDprLoc = gl.getUniformLocation(starProgram, 'u_dpr');
+      const starTimeLoc = gl.getUniformLocation(starProgram, 'u_time');
+      const starSizeScaleLoc = gl.getUniformLocation(starProgram, 'u_sizeScale');
+      const starAlphaLoc = gl.getUniformLocation(starProgram, 'u_alpha');
       const lineVpLoc = gl.getUniformLocation(lineProgram, 'u_viewProjection');
       const lineColorLoc = gl.getUniformLocation(lineProgram, 'u_color');
 
-      const camera = { yaw: 0.55, pitch: -0.28, distance: 3.1 };
+      const camera = {
+        yaw: 0.55,
+        pitch: -0.28,
+        distance: 3.1,
+        target: [0, 0, 0],
+        autoRotate: true,
+        dragging: false,
+        velocityYaw: 0,
+        velocityPitch: 0,
+        lastTime: 0,
+      };
 
       function perspective(fovy, aspect, near, far) {
         const f = 1 / Math.tan(fovy / 2);
@@ -598,14 +621,64 @@ void main() {
       return {
         kind: '3d',
         orbit(dx, dy) {
+          camera.dragging = true;
           camera.yaw += dx * 0.008;
           camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch + dy * 0.006));
+          camera.velocityYaw = dx * 0.0012;
+          camera.velocityPitch = dy * 0.0008;
+        },
+        endDrag() {
+          camera.dragging = false;
+        },
+        tick(time) {
+          const previous = camera.lastTime || time;
+          const dt = Math.min(0.05, Math.max(0.001, (time - previous) / 1000));
+          camera.lastTime = time;
+          if (camera.autoRotate && !camera.dragging) {
+            camera.yaw += dt * 0.16;
+          }
+          camera.yaw += camera.velocityYaw;
+          camera.pitch = Math.max(
+            -1.2,
+            Math.min(1.2, camera.pitch + camera.velocityPitch),
+          );
+          camera.velocityYaw *= 0.9;
+          camera.velocityPitch *= 0.9;
         },
         zoom(delta) {
           camera.distance = Math.max(
-            1.4,
+            1.2,
             Math.min(6, camera.distance * (delta > 0 ? 1.08 : 0.92)),
           );
+        },
+        setAutoRotate(value) {
+          camera.autoRotate = Boolean(value);
+          return camera.autoRotate;
+        },
+        getAutoRotate() {
+          return camera.autoRotate;
+        },
+        focusItem(item, width, height) {
+          if (!item) return;
+          const minDim = Math.max(1, Math.min(width, height));
+          camera.target = [
+            (item.x - width / 2) / minDim,
+            -(item.y - height / 2) / minDim,
+            (item.z || 0) / minDim,
+          ];
+          camera.distance = 2;
+          camera.velocityYaw = 0;
+          camera.velocityPitch = 0;
+        },
+        reset() {
+          camera.yaw = 0.55;
+          camera.pitch = -0.28;
+          camera.distance = 3.1;
+          camera.target = [0, 0, 0];
+          camera.autoRotate = true;
+          camera.dragging = false;
+          camera.velocityYaw = 0;
+          camera.velocityPitch = 0;
         },
         draw(width, height, dpr, positions, edges) {
           const pixelWidth = Math.max(1, Math.floor(width * dpr));
@@ -620,12 +693,13 @@ void main() {
 
           const minDim = Math.max(1, Math.min(width, height));
           const cosPitch = Math.cos(camera.pitch);
+          const target = camera.target;
           const eye = [
-            Math.sin(camera.yaw) * cosPitch * camera.distance,
-            Math.sin(camera.pitch) * camera.distance,
-            Math.cos(camera.yaw) * cosPitch * camera.distance,
+            target[0] + Math.sin(camera.yaw) * cosPitch * camera.distance,
+            target[1] + Math.sin(camera.pitch) * camera.distance,
+            target[2] + Math.cos(camera.yaw) * cosPitch * camera.distance,
           ];
-          const view = lookAt(eye, [0, 0, 0], [0, 1, 0]);
+          const view = lookAt(eye, target, [0, 1, 0]);
           const projection = perspective(Math.PI / 4, width / height, 0.1, 20);
           const viewProjection = multiply(projection, view);
           const project = (x, y, z) => {
@@ -690,6 +764,7 @@ void main() {
             const positionData = new Float32Array(count * 3);
             const sizeData = new Float32Array(count);
             const colorData = new Float32Array(count * 3);
+            const phaseData = new Float32Array(count);
             const projected = [];
             positions.forEach((item, index) => {
               const point = project(item.x, item.y, item.z);
@@ -703,6 +778,12 @@ void main() {
               colorData[index * 3] = rgb[0];
               colorData[index * 3 + 1] = rgb[1];
               colorData[index * 3 + 2] = rgb[2];
+              const id = String(item.star.id || '');
+              let hash = 0;
+              for (let cursor = 0; cursor < id.length; cursor += 1) {
+                hash = (hash * 31 + id.charCodeAt(cursor)) >>> 0;
+              }
+              phaseData[index] = ((hash % 1000) / 1000) * Math.PI * 2;
               projected.push({
                 ...item,
                 x: point.sx,
@@ -714,6 +795,7 @@ void main() {
             gl.useProgram(starProgram);
             gl.uniformMatrix4fv(starVpLoc, false, viewProjection);
             gl.uniform1f(starDprLoc, dpr);
+            gl.uniform1f(starTimeLoc, performance.now() / 1000);
             gl.bindVertexArray(starVao);
             gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, positionData, gl.DYNAMIC_DRAW);
@@ -721,6 +803,17 @@ void main() {
             gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
             gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, starPhaseBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, phaseData, gl.DYNAMIC_DRAW);
+
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            gl.uniform1f(starSizeScaleLoc, 3.2);
+            gl.uniform1f(starAlphaLoc, 0.12);
+            gl.drawArrays(gl.POINTS, 0, count);
+
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.uniform1f(starSizeScaleLoc, 1);
+            gl.uniform1f(starAlphaLoc, 1);
             gl.drawArrays(gl.POINTS, 0, count);
             return projected;
           }
@@ -729,7 +822,7 @@ void main() {
       };
     }
 
-    function drawLabels(canvas, width, height, dpr, positions, selectedId, emptyText, constellations) {
+    function drawLabels(canvas, width, height, dpr, positions, selectedId, hoveredId, emptyText, constellations) {
       if (!canvas) return;
       const pixelWidth = Math.max(1, Math.floor(width * dpr));
       const pixelHeight = Math.max(1, Math.floor(height * dpr));
@@ -799,6 +892,12 @@ void main() {
           surface.beginPath();
           surface.arc(item.x, item.y, radius + 5, 0, Math.PI * 2);
           surface.stroke();
+        } else if (item.star.id === hoveredId) {
+          surface.strokeStyle = '#7FD8FF';
+          surface.lineWidth = 1.5;
+          surface.beginPath();
+          surface.arc(item.x, item.y, radius + 4, 0, Math.PI * 2);
+          surface.stroke();
         }
         if (weight > 0.55 && positions.length <= 120) {
           surface.fillStyle = 'rgba(232,236,255,0.82)';
@@ -867,6 +966,9 @@ void main() {
       const glRef = React.useRef({ canvas: null, renderer: null, mode: null });
       const drawRef = React.useRef(null);
       const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
+      const hoveredIdRef = React.useRef(null);
+      const [hovered, setHovered] = React.useState(null);
+      const [autoRotate, setAutoRotate] = React.useState(true);
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1048,24 +1150,30 @@ void main() {
       React.useEffect(() => {
         const canvas = canvasRef.current;
         const viewMode = settings?.viewMode === '2d' ? '2d' : '3d';
-        const canSwitch = immersive && maps.length > 1;
-        if (!canvas || (viewMode === '2d' && !canSwitch)) return undefined;
-        const onWheel = (event) => {
-          if (viewMode !== '2d' && event.shiftKey) {
-            event.preventDefault();
-            glRef.current.renderer?.zoom?.(event.deltaY);
-            drawRef.current?.();
-            return;
-          }
-          if (!canSwitch) return;
-          event.preventDefault();
+        const canSwitch = maps.length > 1;
+        if (!canvas || (viewMode === '2d' && !(immersive && canSwitch))) return undefined;
+        const switchMap = (deltaY) => {
           const index = maps.findIndex((map) => map.id === activeId);
           if (index < 0) return;
-          const next = maps[(index + (event.deltaY > 0 ? 1 : -1) + maps.length) % maps.length];
+          const next = maps[(index + (deltaY > 0 ? 1 : -1) + maps.length) % maps.length];
           if (next) {
             setActiveId(next.id);
             setMapToast(next.name);
           }
+        };
+        const onWheel = (event) => {
+          if (viewMode !== '2d') {
+            event.preventDefault();
+            if (event.ctrlKey && canSwitch) {
+              switchMap(event.deltaY);
+              return;
+            }
+            glRef.current.renderer?.zoom?.(event.deltaY);
+            drawRef.current?.();
+            return;
+          }
+          event.preventDefault();
+          switchMap(event.deltaY);
         };
         canvas.addEventListener('wheel', onWheel, { passive: false });
         return () => canvas.removeEventListener('wheel', onWheel);
@@ -1150,6 +1258,7 @@ void main() {
               dpr,
               displayPositions,
               selectedId,
+              hoveredIdRef.current,
               emptyText,
               data?.constellations || [],
             );
@@ -1261,6 +1370,29 @@ void main() {
         }
       }, [data, selectedId, query, size, layoutVersion, settings?.viewMode]);
 
+      React.useEffect(() => {
+        if (settings?.viewMode === '2d') return undefined;
+        let frame = 0;
+        let lastDraw = 0;
+        const tick = (time) => {
+          const renderer = glRef.current.renderer;
+          if (renderer?.kind === '3d') {
+            renderer.tick(time);
+            if (time - lastDraw > 33) {
+              drawRef.current?.();
+              lastDraw = time;
+            }
+          }
+          frame = requestAnimationFrame(tick);
+        };
+        frame = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(frame);
+      }, [settings?.viewMode]);
+
+      React.useEffect(() => {
+        glRef.current.renderer?.setAutoRotate?.(autoRotate);
+      }, [autoRotate, settings?.viewMode]);
+
       function handlePointerDown(event) {
         if (settings?.viewMode === '2d' || event.button !== 0) return;
         dragRef.current = {
@@ -1269,12 +1401,42 @@ void main() {
           lastY: event.clientY,
           moved: 0,
         };
+        hoveredIdRef.current = null;
+        setHovered(null);
+        event.currentTarget.focus?.();
         event.currentTarget.style.cursor = 'grabbing';
         event.currentTarget.setPointerCapture?.(event.pointerId);
       }
 
+      function updateHover(event) {
+        if (settings?.viewMode === '2d') return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        let best = null;
+        for (const item of positionsRef.current) {
+          if (item.visible === false) continue;
+          const distance = Math.hypot(item.x - x, item.y - y);
+          if (distance <= 16 && (!best || distance < best.distance)) {
+            best = { ...item, distance };
+          }
+        }
+        if (best) {
+          hoveredIdRef.current = best.star.id;
+          setHovered({ star: best.star, x, y });
+        } else {
+          hoveredIdRef.current = null;
+          setHovered(null);
+        }
+      }
+
       function handlePointerMove(event) {
-        if (!dragRef.current.active) return;
+        if (!dragRef.current.active) {
+          updateHover(event);
+          return;
+        }
         const dx = event.clientX - dragRef.current.lastX;
         const dy = event.clientY - dragRef.current.lastY;
         dragRef.current.lastX = event.clientX;
@@ -1290,11 +1452,100 @@ void main() {
       function handlePointerUp(event) {
         if (!dragRef.current.active) return;
         dragRef.current.active = false;
+        glRef.current.renderer?.endDrag?.();
         event.currentTarget.style.cursor = 'grab';
         try {
           event.currentTarget.releasePointerCapture?.(event.pointerId);
         } catch {
           // pointer capture may already be released
+        }
+      }
+
+      function handlePointerLeave() {
+        hoveredIdRef.current = null;
+        setHovered(null);
+      }
+
+      function handleDoubleClick(event) {
+        if (settings?.viewMode === '2d') return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        let best = null;
+        for (const item of positionsRef.current) {
+          if (item.visible === false) continue;
+          const distance = Math.hypot(item.x - x, item.y - y);
+          if (distance <= 20 && (!best || distance < best.distance)) {
+            best = { ...item, distance };
+          }
+        }
+        if (!best) return;
+        setSelectedId(best.star.id);
+        setAutoRotate(false);
+        glRef.current.renderer?.setAutoRotate?.(false);
+        glRef.current.renderer?.focusItem?.(best, size.width, size.height);
+        drawRef.current?.();
+      }
+
+      function focusSelected() {
+        const item = positionsRef.current.find((entry) => entry.star.id === selected?.id);
+        if (!item) return;
+        setAutoRotate(false);
+        glRef.current.renderer?.setAutoRotate?.(false);
+        glRef.current.renderer?.focusItem?.(item, size.width, size.height);
+        drawRef.current?.();
+      }
+
+      function handleKeyDown(event) {
+        if (settings?.viewMode === '2d') return;
+        const renderer = glRef.current.renderer;
+        if (!renderer) return;
+        const key = event.key;
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          event.preventDefault();
+          renderer.orbit(key === 'ArrowLeft' ? -24 : 24, 0);
+          renderer.endDrag?.();
+          drawRef.current?.();
+          return;
+        }
+        if (key === 'ArrowUp' || key === 'ArrowDown') {
+          event.preventDefault();
+          renderer.orbit(0, key === 'ArrowUp' ? -24 : 24);
+          renderer.endDrag?.();
+          drawRef.current?.();
+          return;
+        }
+        if (key === '+' || key === '=') {
+          event.preventDefault();
+          renderer.zoom(-1);
+          drawRef.current?.();
+          return;
+        }
+        if (key === '-' || key === '_') {
+          event.preventDefault();
+          renderer.zoom(1);
+          drawRef.current?.();
+          return;
+        }
+        if (key === '0') {
+          event.preventDefault();
+          renderer.reset?.();
+          setAutoRotate(true);
+          drawRef.current?.();
+          return;
+        }
+        if (key === ' ') {
+          event.preventDefault();
+          const next = !autoRotate;
+          setAutoRotate(next);
+          renderer.setAutoRotate?.(next);
+          return;
+        }
+        if (key === 'f' || key === 'F') {
+          event.preventDefault();
+          focusSelected();
         }
       }
 
@@ -1804,17 +2055,22 @@ void main() {
           { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' } },
           h('canvas', {
             ref: canvasRef,
+            tabIndex: 0,
             onClick: onCanvasClick,
+            onKeyDown: handleKeyDown,
             onPointerDown: handlePointerDown,
             onPointerMove: handlePointerMove,
             onPointerUp: handlePointerUp,
             onPointerCancel: handlePointerUp,
+            onPointerLeave: handlePointerLeave,
+            onDoubleClick: handleDoubleClick,
             style: {
               display: 'block',
               width: '100%',
               height: '100%',
               cursor: settings?.viewMode === '2d' ? (immersive ? 'default' : 'crosshair') : 'grab',
               background: 'linear-gradient(135deg, #0B1026, #131A3A)',
+              outline: 'none',
             },
           }),
           h('canvas', {
@@ -1842,7 +2098,122 @@ void main() {
                     pointerEvents: 'none',
                   },
                 },
-                '拖动旋转 · Shift+滚轮缩放',
+                '拖动/方向键旋转 · 滚轮缩放 · Ctrl+滚轮切图 · 双击聚焦',
+              )
+            : null,
+          settings?.viewMode !== '2d'
+            ? h(
+                'div',
+                {
+                  style: {
+                    position: 'absolute',
+                    left: '12px',
+                    bottom: '12px',
+                    display: 'flex',
+                    gap: '6px',
+                    zIndex: 4,
+                  },
+                },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    onClick: () => {
+                      const next = !autoRotate;
+                      setAutoRotate(next);
+                      glRef.current.renderer?.setAutoRotate?.(next);
+                    },
+                    style: {
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      opacity: 0.86,
+                    },
+                  },
+                  autoRotate ? '自动旋转：开' : '自动旋转：关',
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    onClick: () => {
+                      glRef.current.renderer?.reset?.();
+                      setAutoRotate(true);
+                      drawRef.current?.();
+                    },
+                    style: {
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      opacity: 0.86,
+                    },
+                  },
+                  '重置视角',
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    disabled: !selected,
+                    onClick: () => {
+                      const item = positionsRef.current.find(
+                        (entry) => entry.star.id === selected?.id,
+                      );
+                      if (!item) return;
+                      setAutoRotate(false);
+                      glRef.current.renderer?.setAutoRotate?.(false);
+                      glRef.current.renderer?.focusItem?.(item, size.width, size.height);
+                      drawRef.current?.();
+                    },
+                    style: {
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      border: '1px solid var(--ms-border)',
+                      background: 'var(--ms-panel)',
+                      color: 'var(--ms-text)',
+                      fontSize: '10px',
+                      cursor: selected ? 'pointer' : 'default',
+                      opacity: selected ? 0.86 : 0.35,
+                    },
+                  },
+                  '聚焦选中',
+                ),
+              )
+            : null,
+          hovered
+            ? h(
+                'div',
+                {
+                  style: {
+                    position: 'absolute',
+                    left: Math.min(hovered.x + 14, Math.max(12, size.width - 230)),
+                    top: Math.min(hovered.y + 14, Math.max(12, size.height - 76)),
+                    width: '220px',
+                    padding: '7px 9px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--ms-border)',
+                    background: 'var(--ms-panel)',
+                    color: 'var(--ms-text)',
+                    fontSize: '11px',
+                    pointerEvents: 'none',
+                    zIndex: 5,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+                  },
+                },
+                h('div', { style: { fontWeight: 600 } }, hovered.star.title),
+                h(
+                  'div',
+                  { style: { opacity: 0.7, marginTop: '2px', wordBreak: 'break-word' } },
+                  hovered.star.fact,
+                ),
               )
             : null,
           mapToast
