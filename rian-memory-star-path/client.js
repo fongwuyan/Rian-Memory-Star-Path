@@ -3060,6 +3060,10 @@ void main() {
                   ['冲突', health.disputed],
                   ['归档', health.archived],
                   ['星总数', health.stars],
+                  ['检索次数', health.metrics?.searches ?? 0],
+                  ['最近检索', `${health.metrics?.lastSearchMs ?? 0}ms`],
+                  ['写入次数', health.metrics?.saves ?? 0],
+                  ['备份', health.backups ?? 0],
                 ].map(([label, value]) =>
                   h(
                     'div',

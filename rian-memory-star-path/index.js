@@ -222,6 +222,16 @@ export function apply(ctx) {
   const turnTrace = new Map();
   const recentRecalls = new Map();
   const recallLog = new Map();
+  const metrics = {
+    searches: 0,
+    saves: 0,
+    recalls: 0,
+    briefs: 0,
+    lastSearchMs: 0,
+    lastSearchAt: null,
+    lastSaveAt: null,
+    lastRecallAt: null,
+  };
   const saveTimers = new Map();
   const indexCache = new Map();
   const dirtyIndex = new Set();
@@ -765,6 +775,7 @@ export function apply(ctx) {
   function searchAcrossMaps(mapIds, query, limit) {
     const queryTerms = tokensOf(query);
     if (!queryTerms.size) return [];
+    const searchStarted = Date.now();
     const at = Date.now();
     const lower = String(query).toLowerCase();
     const preferenceCue = /记住|以后|统一|别再|偏好|always|never|prefer/.test(lower);
@@ -795,6 +806,9 @@ export function apply(ctx) {
       }
     }
     hits.sort((a, b) => b.score - a.score);
+    metrics.searches += 1;
+    metrics.lastSearchMs = Date.now() - searchStarted;
+    metrics.lastSearchAt = nowIso();
     return hits.slice(0, clamp(Number(limit) || 8, 1, 50));
   }
 
@@ -869,6 +883,8 @@ export function apply(ctx) {
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
       return { text: '', count: 0, starIds: [] };
     }
+    metrics.recalls += 1;
+    metrics.lastRecallAt = nowIso();
     const topK = Math.max(1, Number(settings.topK) || 6);
     const hits = searchInternal(agent, mapId, query, Math.min(50, topK * 3))
       .filter((hit) => !isRecallSuppressed(agent?.id, hit.star.id, turn))
@@ -911,6 +927,7 @@ export function apply(ctx) {
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
       return { text: '', count: 0, starIds: [] };
     }
+    metrics.briefs += 1;
     const at = Date.now();
     const picked = [];
     const publicData = maps.get(index.publicMapId);
@@ -1140,6 +1157,8 @@ export function apply(ctx) {
       );
       invalidateIndex(existing.mapId);
       scheduleMapSave(existing.mapId);
+      metrics.saves += 1;
+      metrics.lastSaveAt = nowIso();
       return {
         status: 'merged',
         id: existing.id,
@@ -1177,6 +1196,8 @@ export function apply(ctx) {
         createdAt: nowIso(),
       });
     }
+    metrics.saves += 1;
+    metrics.lastSaveAt = nowIso();
     return {
       status: star.status,
       id: star.id,
@@ -2088,6 +2109,14 @@ export function apply(ctx) {
                 disputed: stars.filter((star) => star.status === 'active' && star.disputed).length,
               };
             });
+            let backups = 0;
+            try {
+              backups = (await fs.readdir(backupsDir)).filter((name) =>
+                name.endsWith('.zip'),
+              ).length;
+            } catch {
+              // no backups yet
+            }
             sendJson(res, 200, {
               maps: index.maps.length,
               stars: all.length,
@@ -2097,6 +2126,8 @@ export function apply(ctx) {
               rejected: all.filter((star) => star.status === 'rejected').length,
               disputed: all.filter((star) => star.status === 'active' && star.disputed).length,
               mapsDetail,
+              metrics: { ...metrics },
+              backups,
               version: PLUGIN_VERSION,
               schemaVersion: 1,
               profile: process.env.DSH_PROFILE || null,
