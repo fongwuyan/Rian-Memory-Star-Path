@@ -7,6 +7,7 @@
 - 版本：`0.0.1`
 - 仓库：<https://github.com/fongwuyan/Rian-Memory-Star-Path>
 - 设计文档：[docs/rian-memory-star-path.design.md](docs/rian-memory-star-path.design.md)
+- 发布检查清单：[docs/release-checklist.md](docs/release-checklist.md)
 
 ## 特性
 
@@ -169,6 +170,12 @@ $env:DSH_MEMORY_API = "http://127.0.0.1:51107/plugins/rian-memory-star-path/api-
 ```
 
 脚本会创建临时星图、验证冲突裁决 / 星尘恢复 / 星座 / 搜索 / zip 导入导出 / 设置往返，并在结束时清理。
+
+主题文字对比度（WCAG，阈值 4.5）：
+
+```powershell
+node tests/theme-contrast.mjs
+```
 
 ### 性能基线
 

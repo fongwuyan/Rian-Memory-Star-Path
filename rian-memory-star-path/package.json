@@ -20,7 +20,8 @@
     "icon.svg"
   ],
   "scripts": {
-    "test": "node tests/regression.mjs"
+    "test": "node tests/regression.mjs",
+    "test:theme": "node tests/theme-contrast.mjs"
   },
   "dsh": {
     "bundle": {

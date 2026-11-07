@@ -13,6 +13,9 @@ window.__ModuleLoader__.load({
         text: '#E8ECFF',
         border: 'rgba(190,205,255,0.2)',
         subtle: 'rgba(255,255,255,0.06)',
+        accent: '#7FD8FF',
+        warn: '#FFD479',
+        violet: '#B98CFF',
       },
       light: {
         bg: '#F4F6FB',
@@ -21,6 +24,9 @@ window.__ModuleLoader__.load({
         text: '#17203A',
         border: 'rgba(23,32,58,0.18)',
         subtle: 'rgba(23,32,58,0.06)',
+        accent: '#0B63CE',
+        warn: '#8A5A00',
+        violet: '#6533B7',
       },
     };
 
@@ -34,6 +40,9 @@ window.__ModuleLoader__.load({
       root.style.setProperty('--ms-text', theme.text);
       root.style.setProperty('--ms-border', theme.border);
       root.style.setProperty('--ms-subtle', theme.subtle);
+      root.style.setProperty('--ms-accent', theme.accent);
+      root.style.setProperty('--ms-warn', theme.warn);
+      root.style.setProperty('--ms-violet', theme.violet);
     }
 
     applyTheme('dark');
@@ -1287,7 +1296,7 @@ void main() {
             'button',
             {
               type: 'button',
-              style: { ...tabStyle('__new'), background: 'rgba(127,216,255,0.16)', color: '#7FD8FF' },
+              style: { ...tabStyle('__new'), background: 'rgba(127,216,255,0.16)', color: 'var(--ms-accent)' },
               onClick: () =>
                 setDraft({ title: '', fact: '', reason: '', condition: '', type: 'fact', tags: '' }),
             },
@@ -1297,7 +1306,7 @@ void main() {
             'button',
             {
               type: 'button',
-              style: { ...tabStyle('__newmap'), background: 'rgba(255,212,121,0.12)', color: '#FFD479' },
+              style: { ...tabStyle('__newmap'), background: 'rgba(255,212,121,0.12)', color: 'var(--ms-warn)' },
               onClick: () => setMapDraft(''),
             },
             '＋ 图',
@@ -1306,7 +1315,7 @@ void main() {
             'button',
             {
               type: 'button',
-              style: { ...tabStyle('__constellations'), background: 'rgba(182,156,255,0.14)', color: '#B98CFF' },
+              style: { ...tabStyle('__constellations'), background: 'rgba(182,156,255,0.14)', color: 'var(--ms-violet)' },
               onClick: suggestConstellations,
             },
             '整理',
@@ -1353,7 +1362,7 @@ void main() {
                   style: {
                     ...tabStyle('__export'),
                     background: 'rgba(127,216,255,0.12)',
-                    color: '#7FD8FF',
+                    color: 'var(--ms-accent)',
                   },
                   onClick: requestExportCurrent,
                 },
@@ -1466,7 +1475,7 @@ void main() {
                     borderRadius: '999px',
                     border: '1px solid rgba(255,212,121,0.35)',
                     background: 'rgba(255,212,121,0.12)',
-                    color: '#FFD479',
+                    color: 'var(--ms-warn)',
                     cursor: 'pointer',
                     fontSize: '11px',
                   },
@@ -2357,7 +2366,7 @@ void main() {
                   lowConfidence
                     ? h(
                         'div',
-                        { style: { color: '#FFD479', marginTop: '6px' } },
+                        { style: { color: 'var(--ms-warn)', marginTop: '6px' } },
                         `其中 ${lowConfidence} 颗置信度低于 0.5。`,
                       )
                     : null,
@@ -2621,7 +2630,7 @@ void main() {
                           height: '22px',
                           borderRadius: '999px',
                           background: 'rgba(127,216,255,0.16)',
-                          color: '#7FD8FF',
+                          color: 'var(--ms-accent)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -3084,9 +3093,9 @@ void main() {
                           fontWeight: 600,
                           color:
                             label === '冲突' && value
-                              ? '#FFD479'
+                              ? 'var(--ms-warn)'
                               : label === '待确认' && value
-                                ? '#7FD8FF'
+                                ? 'var(--ms-accent)'
                                 : 'inherit',
                         },
                       },
@@ -3124,7 +3133,7 @@ void main() {
                 ]
                   .filter(Boolean)
                   .map((text, index) =>
-                    h('div', { key: index, style: { color: '#FFD479', opacity: 0.8 } }, `→ ${text}`),
+                    h('div', { key: index, style: { color: 'var(--ms-warn)', opacity: 0.8 } }, `→ ${text}`),
                   ),
               )
             : null,
