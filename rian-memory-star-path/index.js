@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import v8 from 'node:v8';
 import { zipSync, unzipSync } from './zip.js';
 
 const PLUGIN_ID = 'rian-memory-star-path';
@@ -333,7 +334,7 @@ export function apply(ctx) {
   }
 
   function mapIndexCachePath(mapId) {
-    return path.join(indexCacheDir, `${mapId}.json`);
+    return path.join(indexCacheDir, `${mapId}.bin`);
   }
 
   async function writeMapMeta(mapId, data) {
@@ -390,7 +391,6 @@ export function apply(ctx) {
       delete loaded.stats;
       maps.set(mapId, loaded);
       starLocator = null;
-      await loadIndexCache(mapId);
       metrics.mapsLoaded += 1;
       return loaded;
     })().finally(() => unloadedLoads.delete(mapId));
@@ -602,6 +602,17 @@ export function apply(ctx) {
     const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
       await fs.writeFile(tmp, JSON.stringify(value, null, pretty ? 2 : 0), 'utf8');
+      await fs.rename(tmp, target);
+    } catch (error) {
+      await fs.unlink(tmp).catch(() => {});
+      throw error;
+    }
+  }
+
+  async function writeBufferAtomic(target, buffer) {
+    const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+    try {
+      await fs.writeFile(tmp, buffer);
       await fs.rename(tmp, target);
     } catch (error) {
       await fs.unlink(tmp).catch(() => {});
@@ -1707,36 +1718,35 @@ export function apply(ctx) {
     const data = maps.get(mapId);
     if (!data || data.stars.length < 2000) return false;
     try {
-      const raw = JSON.parse(await fs.readFile(mapIndexCachePath(mapId), 'utf8'));
-      if (raw?.version !== 1 || raw?.mapId !== mapId || !Array.isArray(raw.docs)) {
+      const payload = v8.deserialize(await fs.readFile(mapIndexCachePath(mapId)));
+      if (payload?.version !== 2 || payload?.mapId !== mapId || !(payload.docs instanceof Map)) {
         return false;
       }
       const sourceHash = indexSourceHash(mapId);
-      if (!sourceHash || raw.sourceHash !== sourceHash) return false;
+      if (!sourceHash || payload.sourceHash !== sourceHash) return false;
       const byId = new Map(data.stars.map((star) => [star.id, star]));
       const index = {
         mapId,
         docs: new Map(),
-        postings: new Map(),
-        df: new Map(),
-        count: 0,
-        totalLen: 0,
-        avgdl: 1,
+        postings: payload.postings instanceof Map ? payload.postings : new Map(),
+        df: payload.df instanceof Map ? payload.df : new Map(),
+        count: Number(payload.count) || 0,
+        totalLen: Number(payload.totalLen) || 0,
+        avgdl: Number(payload.avgdl) || 1,
         sourceHash,
       };
-      for (const entry of raw.docs) {
-        const star = byId.get(entry?.[0]);
+      for (const [starId, doc] of payload.docs) {
+        const star = byId.get(starId);
         if (!star) return false;
-        const tf = new Map(Array.isArray(entry[3]) ? entry[3] : []);
-        index.docs.set(star.id, {
+        index.docs.set(starId, {
           star,
-          signature: Number(entry[1]) || 0,
-          len: Number(entry[2]) || 0,
-          tf,
-          haystack: `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase(),
+          signature: Number(doc?.signature) || 0,
+          len: Number(doc?.len) || 0,
+          tf: doc?.tf instanceof Map ? doc.tf : new Map(),
+          haystack: String(doc?.haystack || ''),
         });
       }
-      rebuildPostings(index);
+      if (!index.count) index.count = index.docs.size;
       indexCache.set(mapId, index);
       trimLru(indexCache, INDEX_CACHE_MAX, mapId);
       metrics.indexCacheHits += 1;
@@ -1751,23 +1761,28 @@ export function apply(ctx) {
     const mapId = index.mapId;
     const data = maps.get(mapId);
     if (!data || data.stars.length < 2000) return;
-    const docs = [...index.docs.values()].map((doc) => [
-      doc.star.id,
-      doc.signature,
-      doc.len,
-      [...doc.tf.entries()],
-    ]);
+    const docs = new Map();
+    for (const doc of index.docs.values()) {
+      docs.set(doc.star.id, {
+        signature: doc.signature,
+        len: doc.len,
+        tf: doc.tf,
+        haystack: doc.haystack,
+      });
+    }
+    const payload = v8.serialize({
+      version: 2,
+      mapId,
+      sourceHash: index.sourceHash,
+      count: index.count,
+      totalLen: index.totalLen,
+      avgdl: index.avgdl,
+      docs,
+      postings: index.postings,
+      df: index.df,
+    });
     await enqueueWrite(`indexcache:${mapId}`, () =>
-      writeJsonAtomic(
-        mapIndexCachePath(mapId),
-        {
-          version: 1,
-          mapId,
-          sourceHash: index.sourceHash,
-          docs,
-        },
-        { pretty: false },
-      ),
+      writeBufferAtomic(mapIndexCachePath(mapId), payload),
     );
     metrics.indexCacheWrites += 1;
   }
@@ -1855,6 +1870,11 @@ export function apply(ctx) {
     metrics.indexSyncs += 1;
     metrics.lastIndexMs = Date.now() - started;
     return index;
+  }
+
+  async function prepareIndex(mapId) {
+    if (!mapId || indexCache.has(mapId)) return;
+    await loadIndexCache(mapId);
   }
 
   function ensureIndex(mapId) {
@@ -2728,6 +2748,7 @@ export function apply(ctx) {
         const agent = currentAgent(exec);
         if (!agent) throw new Error('memory tools require an agent context');
         const mapId = await ensureBinding(agent);
+        await prepareIndex(mapId);
         const hits = searchInternal(agent, mapId, String(args?.query ?? ''), Number(args?.limit) || 8);
         return { stars: hits.map(compactHit) };
       },
@@ -2984,6 +3005,7 @@ export function apply(ctx) {
         const query = messages.map(messageText).join('\n').trim();
         if (!query) return next();
         const mapId = await ensureBinding(agent);
+        await prepareIndex(mapId);
         const isFirst = payload.turn === 1 && payload.step === 1;
         let result;
         if (isFirst) {
@@ -3653,6 +3675,7 @@ export function apply(ctx) {
             const limit = Number(url.searchParams.get('limit')) || 20;
             const graph = url.searchParams.get('graph') === '1';
             await ensureAllMapsLoaded();
+            await Promise.all([...maps.keys()].map((mapId) => prepareIndex(mapId)));
             const hits = searchAcrossMaps([...maps.keys()], query, limit, { graph });
             sendJson(res, 200, {
               query,
