@@ -5,6 +5,7 @@
 - 移除 3D 与缩放，固定为 2D 平面。
 - 星图渲染从 Canvas/WebGL 改为原生 DOM 星点 + SVG 边；平移仍只做 CSS transform。
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
+- 视口预取从 debounce 改为固定节流：持续拖动时每 120ms 也会加载，不再等松手。
 - 拆分全屏交互层与被 transform 的星图层，外围空白区域也能开始拖动。
 - 拖拽时给 body 加 `ms-dragging`，强制全界面 grabbing 光标，星点按钮不再覆盖拖动光标。
 - 关闭星云背景的 drift/spin 位移动画，并将星图区域标记为 Electron `no-drag`，避免拖拽时背景或面板被移动。

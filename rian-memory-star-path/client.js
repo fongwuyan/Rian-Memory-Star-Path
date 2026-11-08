@@ -1837,8 +1837,12 @@ void main() {
             y: pan2dRef.current.y + dy,
           };
           applyPanTransform();
-          if (viewportTimerRef.current) window.clearTimeout(viewportTimerRef.current);
-          viewportTimerRef.current = window.setTimeout(() => refreshViewport(), 160);
+          if (!viewportTimerRef.current) {
+            viewportTimerRef.current = window.setTimeout(() => {
+              viewportTimerRef.current = 0;
+              refreshViewport();
+            }, 120);
+          }
           return;
         }
         const renderer = glRef.current.renderer;
@@ -1868,8 +1872,11 @@ void main() {
           void selectStar(pressedStar);
         }
         if (settings?.viewMode === '2d' && moved > 24) {
-          if (viewportTimerRef.current) window.clearTimeout(viewportTimerRef.current);
-          window.setTimeout(() => refreshViewport(), 60);
+          if (viewportTimerRef.current) {
+            window.clearTimeout(viewportTimerRef.current);
+            viewportTimerRef.current = 0;
+          }
+          window.setTimeout(() => refreshViewport(), 40);
         }
       }
 
@@ -1889,6 +1896,10 @@ void main() {
           window.removeEventListener('pointerup', onUp);
           window.removeEventListener('pointercancel', onUp);
           document.body.classList.remove('ms-dragging');
+          if (viewportTimerRef.current) {
+            window.clearTimeout(viewportTimerRef.current);
+            viewportTimerRef.current = 0;
+          }
         };
       }, []);
 
