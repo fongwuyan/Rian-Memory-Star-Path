@@ -2766,6 +2766,12 @@ export function apply(ctx) {
           const relative = url.pathname.slice(API_PREFIX.length) || '/';
           const parts = relative.split('/').filter(Boolean);
           const method = req.method || 'GET';
+          if (bootError && parts[0] !== 'health') {
+            sendJson(res, 503, {
+              error: `memory store unavailable: ${bootError.message}`,
+            });
+            return;
+          }
 
           if (method === 'GET' && parts[0] === 'maps' && !parts[1]) {
             sendJson(res, 200, {
@@ -3571,6 +3577,7 @@ export function apply(ctx) {
               backups,
               version: PLUGIN_VERSION,
               schemaVersion: 1,
+              bootError: bootError ? String(bootError.message || bootError) : null,
               profile: process.env.DSH_PROFILE || null,
               profileDir: process.env.DSH_PROFILE_DIR || null,
               dataDir,
