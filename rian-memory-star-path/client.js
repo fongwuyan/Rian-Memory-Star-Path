@@ -1129,6 +1129,7 @@ void main() {
       const labelRef = React.useRef(null);
       const positionsRef = React.useRef([]);
       const starLayerRef = React.useRef(null);
+      const interactionRef = React.useRef(null);
       const glRef = React.useRef({ canvas: null, renderer: null, mode: null });
       const drawRef = React.useRef(null);
       const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
@@ -1339,7 +1340,7 @@ void main() {
       }, [query]);
 
       React.useEffect(() => {
-        const layer = starLayerRef.current;
+        const layer = interactionRef.current;
         if (!layer) return undefined;
         const parent = layer.parentElement;
         if (!parent) return undefined;
@@ -1518,7 +1519,7 @@ void main() {
       }, [data, size.width, size.height]);
 
       React.useEffect(() => {
-        const layer = starLayerRef.current;
+        const layer = interactionRef.current;
         if (!layer || maps.length < 2) return undefined;
         const onWheel = (event) => {
           event.preventDefault();
@@ -1855,7 +1856,7 @@ void main() {
         const pressedStar = pressedStarRef.current;
         pressedStarRef.current = null;
         glRef.current.renderer?.endDrag?.();
-        const layer = starLayerRef.current;
+        const layer = interactionRef.current;
         if (layer) layer.style.cursor = 'grab';
         try {
           layer?.releasePointerCapture?.(event.pointerId);
@@ -1983,7 +1984,7 @@ void main() {
           dragRef.current.moved = 0;
           return;
         }
-        if (event.target !== event.currentTarget) return;
+        if (event.target !== event.currentTarget && event.target !== starLayerRef.current) return;
         setSelectedId(null);
         setNebulaOpen(false);
       }
@@ -2578,7 +2579,7 @@ void main() {
           h(
             'div',
             {
-              ref: starLayerRef,
+              ref: interactionRef,
               tabIndex: 0,
               onClick: onCanvasClick,
               onKeyDown: handleKeyDown,
@@ -2591,15 +2592,24 @@ void main() {
                 inset: 0,
                 zIndex: 1,
                 cursor: 'grab',
-                transform: 'translate3d(0, 0, 0)',
                 outline: 'none',
                 touchAction: 'none',
                 userSelect: 'none',
                 WebkitUserSelect: 'none',
                 WebkitAppRegion: 'no-drag',
-                willChange: 'transform',
               },
             },
+            h(
+              'div',
+              {
+                ref: starLayerRef,
+                style: {
+                  position: 'absolute',
+                  inset: 0,
+                  transform: 'translate3d(0, 0, 0)',
+                  willChange: 'transform',
+                },
+              },
             h(
               'svg',
               {
@@ -2731,6 +2741,7 @@ void main() {
                   ),
                 )
               : null,
+            ),
           ),
           emptyViewportText
             ? h(
