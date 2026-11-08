@@ -233,6 +233,16 @@ export function apply(ctx) {
   const turnTrace = new Map();
   const recentRecalls = new Map();
   const recallLog = new Map();
+  const INDEX_CACHE_MAX = 4;
+  const LAYOUT_CACHE_MAX = 4;
+  const PAGE_CACHE_MAX = 8;
+  function trimLru(cache, max, keepKey) {
+    while (cache.size > max) {
+      const oldest = cache.keys().next().value;
+      if (oldest === keepKey) break;
+      cache.delete(oldest);
+    }
+  }
   const metrics = {
     searches: 0,
     saves: 0,
@@ -1127,7 +1137,12 @@ export function apply(ctx) {
     const data = maps.get(mapId);
     if (!data) return null;
     const cached = layoutCache.get(mapId);
-    if (cached) return cached;
+    if (cached) {
+      layoutCache.delete(mapId);
+      layoutCache.set(mapId, cached);
+      trimLru(layoutCache, LAYOUT_CACHE_MAX, mapId);
+      return cached;
+    }
     const started = Date.now();
     const stars = data.stars.filter((star) => star.status === 'active' && !star.disputed);
     const count = stars.length;
@@ -1225,6 +1240,7 @@ export function apply(ctx) {
       builtAt: Date.now(),
     };
     layoutCache.set(mapId, layout);
+    trimLru(layoutCache, LAYOUT_CACHE_MAX, mapId);
     metrics.layoutBuilds += 1;
     metrics.lastLayoutMs = Date.now() - started;
     return layout;
@@ -1337,7 +1353,12 @@ export function apply(ctx) {
     const data = maps.get(mapId);
     if (!data) return null;
     const cached = pageCache.get(mapId);
-    if (cached && cached.starsRef === data.stars) return cached.list;
+    if (cached && cached.starsRef === data.stars) {
+      pageCache.delete(mapId);
+      pageCache.set(mapId, cached);
+      trimLru(pageCache, PAGE_CACHE_MAX, mapId);
+      return cached.list;
+    }
     const list = data.stars
       .filter((star) => star.status === 'active')
       .map((star) => ({
@@ -1350,6 +1371,7 @@ export function apply(ctx) {
           String(a.star.id).localeCompare(String(b.star.id)),
       );
     pageCache.set(mapId, { starsRef: data.stars, list });
+    trimLru(pageCache, PAGE_CACHE_MAX, mapId);
     return list;
   }
 
@@ -1492,6 +1514,7 @@ export function apply(ctx) {
       addIndexDoc(index, star);
     }
     indexCache.set(mapId, index);
+    trimLru(indexCache, INDEX_CACHE_MAX, mapId);
     dirtyIndex.delete(mapId);
     dirtyStars.delete(mapId);
     metrics.indexRebuilds += 1;
@@ -1548,6 +1571,9 @@ export function apply(ctx) {
   function ensureIndex(mapId) {
     const cached = indexCache.get(mapId);
     if (!cached) return buildIndex(mapId);
+    indexCache.delete(mapId);
+    indexCache.set(mapId, cached);
+    trimLru(indexCache, INDEX_CACHE_MAX, mapId);
     if (dirtyIndex.has(mapId)) return syncIndex(mapId, cached);
     if (dirtyStars.has(mapId)) return syncDirtyStars(mapId, cached);
     return cached;
@@ -1581,6 +1607,7 @@ export function apply(ctx) {
       }
       if (indexCache.has(mapId) || dirtyIndex.has(mapId) || dirtyStars.has(mapId)) return;
       indexCache.set(mapId, index);
+      trimLru(indexCache, INDEX_CACHE_MAX, mapId);
       metrics.indexPrewarms += 1;
       metrics.lastIndexMs = Date.now() - started;
     } finally {
