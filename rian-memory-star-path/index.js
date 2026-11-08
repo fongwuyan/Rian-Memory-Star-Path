@@ -405,7 +405,7 @@ export function apply(ctx) {
         'bindings.json': JSON.stringify(Object.fromEntries(bindings), null, 2),
       };
       for (const data of maps.values()) {
-        files[`maps/${data.map.id}.json`] = JSON.stringify(data, null, 2);
+        files[`maps/${data.map.id}.json`] = JSON.stringify(data);
       }
       const archive = zipSync(files);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -446,10 +446,11 @@ export function apply(ctx) {
     return next;
   }
 
-  async function writeJsonAtomic(target, value) {
+  async function writeJsonAtomic(target, value, options = {}) {
+    const pretty = options.pretty !== false;
     const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
-      await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+      await fs.writeFile(tmp, JSON.stringify(value, null, pretty ? 2 : 0), 'utf8');
       await fs.rename(tmp, target);
     } catch (error) {
       await fs.unlink(tmp).catch(() => {});
@@ -472,7 +473,7 @@ export function apply(ctx) {
     return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
       if (!data) return undefined;
-      await writeJsonAtomic(mapPath(mapId), data);
+      await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
       await fs.unlink(journalPath(mapId)).catch(() => {});
       journalBytes.delete(mapId);
       return undefined;

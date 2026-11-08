@@ -795,7 +795,7 @@ weight = clamp(
 
 ### 10.2 持久化
 
-- 地图全量快照 + append-only journal；
+- 地图全量快照 + append-only journal；快照与备份使用紧凑 JSON；
 - 单星 upsert/delete、边/星座 upsert/delete、召回 stats 追加到 `*.journal.ndjson`，启动时回放；
 - 设置 `journalFsync: true` 时 journal 追加后 fsync；profile 级 `plugin.lock` 阻止多进程同时写；
 - 手动 `POST /stars` 与模型 `memory_save` 共用 `upsertStarToMap`，同样做相似合并、连边和 history；
