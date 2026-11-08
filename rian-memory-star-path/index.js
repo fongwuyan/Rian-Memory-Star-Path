@@ -232,6 +232,7 @@ export function apply(ctx) {
     indexRebuilds: 0,
     indexSyncs: 0,
     searchCandidates: 0,
+    graphExpansions: 0,
     lastSearchMs: 0,
     lastIndexMs: 0,
     lastSearchAt: null,
@@ -241,6 +242,7 @@ export function apply(ctx) {
   const saveTimers = new Map();
   const indexCache = new Map();
   const dirtyIndex = new Set();
+  const dirtyStars = new Map();
   const writeQueues = new Map();
   let settings = { ...DEFAULT_SETTINGS };
   let bootError = null;
@@ -731,8 +733,20 @@ export function apply(ctx) {
     return list;
   }
 
-  function invalidateIndex(mapId) {
-    if (mapId) dirtyIndex.add(mapId);
+  function invalidateIndex(mapId, starId) {
+    if (!mapId) return;
+    if (!starId) {
+      dirtyIndex.add(mapId);
+      dirtyStars.delete(mapId);
+      return;
+    }
+    if (dirtyIndex.has(mapId)) return;
+    let ids = dirtyStars.get(mapId);
+    if (!ids) {
+      ids = new Set();
+      dirtyStars.set(mapId, ids);
+    }
+    ids.add(starId);
   }
 
   function searchSignature(star) {
@@ -777,45 +791,87 @@ export function apply(ctx) {
     };
   }
 
-  function buildPostings(docs) {
-    const postings = new Map();
-    const df = new Map();
-    let totalLen = 0;
-    docs.forEach((doc, docIndex) => {
-      totalLen += doc.len;
-      for (const term of doc.tf.keys()) {
-        let list = postings.get(term);
-        if (!list) {
-          list = [];
-          postings.set(term, list);
-        }
-        list.push(docIndex);
-        df.set(term, (df.get(term) || 0) + 1);
+  function addIndexDoc(index, star, signature = searchSignature(star)) {
+    removeIndexDoc(index, star.id);
+    const doc = makeIndexDoc(star, signature);
+    index.docs.set(star.id, doc);
+    for (const term of doc.tf.keys()) {
+      let posting = index.postings.get(term);
+      if (!posting) {
+        posting = new Set();
+        index.postings.set(term, posting);
       }
-    });
-    return {
-      postings,
-      df,
-      count: docs.length,
-      avgdl: docs.length ? totalLen / docs.length : 1,
-      totalLen,
-    };
+      posting.add(star.id);
+      index.df.set(term, (index.df.get(term) || 0) + 1);
+    }
+    index.count += 1;
+    index.totalLen += doc.len;
+    index.avgdl = index.count ? index.totalLen / index.count : 1;
+    return doc;
+  }
+
+  function removeIndexDoc(index, starId) {
+    const doc = index.docs.get(starId);
+    if (!doc) return false;
+    index.docs.delete(starId);
+    for (const term of doc.tf.keys()) {
+      const posting = index.postings.get(term);
+      if (!posting) continue;
+      posting.delete(starId);
+      const nextDf = (index.df.get(term) || 0) - 1;
+      if (nextDf <= 0) {
+        index.df.delete(term);
+        index.postings.delete(term);
+      } else {
+        index.df.set(term, nextDf);
+      }
+    }
+    index.count = Math.max(0, index.count - 1);
+    index.totalLen = Math.max(0, index.totalLen - doc.len);
+    index.avgdl = index.count ? index.totalLen / index.count : 1;
+    return true;
+  }
+
+  function rebuildPostings(index) {
+    index.postings = new Map();
+    index.df = new Map();
+    index.totalLen = 0;
+    index.count = index.docs.size;
+    for (const doc of index.docs.values()) {
+      index.totalLen += doc.len;
+      for (const term of doc.tf.keys()) {
+        let posting = index.postings.get(term);
+        if (!posting) {
+          posting = new Set();
+          index.postings.set(term, posting);
+        }
+        posting.add(doc.star.id);
+        index.df.set(term, (index.df.get(term) || 0) + 1);
+      }
+    }
+    index.avgdl = index.count ? index.totalLen / index.count : 1;
   }
 
   function buildIndex(mapId) {
     const data = maps.get(mapId);
     if (!data) return null;
     const started = Date.now();
-    const docs = [];
-    const byId = new Map();
+    const index = {
+      mapId,
+      docs: new Map(),
+      postings: new Map(),
+      df: new Map(),
+      count: 0,
+      totalLen: 0,
+      avgdl: 1,
+    };
     for (const star of data.stars) {
       if (star.status !== 'active' || star.disputed) continue;
-      byId.set(star.id, docs.length);
-      docs.push(makeIndexDoc(star));
+      addIndexDoc(index, star);
     }
-    const index = { docs, byId, ...buildPostings(docs), mapId };
     indexCache.set(mapId, index);
     dirtyIndex.delete(mapId);
+    dirtyStars.delete(mapId);
     metrics.indexRebuilds += 1;
     metrics.lastIndexMs = Date.now() - started;
     return index;
@@ -825,22 +881,43 @@ export function apply(ctx) {
     const data = maps.get(mapId);
     if (!data) return null;
     const started = Date.now();
-    const docs = [];
-    const byId = new Map();
+    const nextDocs = new Map();
     for (const star of data.stars) {
       if (star.status !== 'active' || star.disputed) continue;
-      const previousIndex = index.byId.get(star.id);
-      const previous = previousIndex === undefined ? undefined : index.docs[previousIndex];
+      const previous = index.docs.get(star.id);
       const signature = searchSignature(star);
-      const doc =
+      nextDocs.set(
+        star.id,
         previous && previous.signature === signature
           ? Object.assign(previous, { star })
-          : makeIndexDoc(star, signature);
-      byId.set(star.id, docs.length);
-      docs.push(doc);
+          : makeIndexDoc(star, signature),
+      );
     }
-    Object.assign(index, { docs, byId, ...buildPostings(docs), mapId });
+    index.docs = nextDocs;
+    rebuildPostings(index);
     dirtyIndex.delete(mapId);
+    dirtyStars.delete(mapId);
+    metrics.indexSyncs += 1;
+    metrics.lastIndexMs = Date.now() - started;
+    return index;
+  }
+
+  function syncDirtyStars(mapId, index) {
+    const data = maps.get(mapId);
+    if (!data) return null;
+    const ids = dirtyStars.get(mapId);
+    if (!ids || !ids.size) return index;
+    const started = Date.now();
+    const lookup =
+      ids.size > 500 ? new Map(data.stars.map((star) => [star.id, star])) : null;
+    for (const starId of ids) {
+      removeIndexDoc(index, starId);
+      const star = lookup ? lookup.get(starId) : data.stars.find((item) => item.id === starId);
+      if (star && star.status === 'active' && !star.disputed) {
+        addIndexDoc(index, star);
+      }
+    }
+    dirtyStars.delete(mapId);
     metrics.indexSyncs += 1;
     metrics.lastIndexMs = Date.now() - started;
     return index;
@@ -850,6 +927,7 @@ export function apply(ctx) {
     const cached = indexCache.get(mapId);
     if (!cached) return buildIndex(mapId);
     if (dirtyIndex.has(mapId)) return syncIndex(mapId, cached);
+    if (dirtyStars.has(mapId)) return syncDirtyStars(mapId, cached);
     return cached;
   }
 
@@ -919,11 +997,11 @@ export function apply(ctx) {
       for (const term of queryTerms) {
         const posting = mapIndex.postings.get(term);
         if (!posting) continue;
-        for (const docIndex of posting) candidates.add(docIndex);
+        for (const starId of posting) candidates.add(starId);
       }
       metrics.searchCandidates += candidates.size;
-      for (const docIndex of candidates) {
-        const doc = mapIndex.docs[docIndex];
+      for (const starId of candidates) {
+        const doc = mapIndex.docs.get(starId);
         if (!doc) continue;
         const star = doc.star;
         if (star.validUntil && Date.parse(star.validUntil) < at) continue;
@@ -1030,6 +1108,45 @@ export function apply(ctx) {
     }
   }
 
+  function expandHitsWithGraph(mapId, hits, limit, at = Date.now()) {
+    const data = maps.get(mapId);
+    if (!data || !data.edges?.length || !hits.length) return hits;
+    const usable = data.edges.filter((edge) =>
+      ['related', 'supports', 'derived', 'part-of'].includes(edge.relation),
+    );
+    if (!usable.length || usable.length > 5000) return hits;
+    const byId = new Map(data.stars.map((star) => [star.id, star]));
+    const seen = new Set(hits.map((hit) => hit.star.id));
+    const extras = [];
+    for (const hit of hits.slice(0, Math.min(hits.length, limit * 2))) {
+      for (const edge of usable) {
+        const neighborId =
+          edge.from === hit.star.id
+            ? edge.to
+            : edge.to === hit.star.id
+              ? edge.from
+              : null;
+        if (!neighborId || seen.has(neighborId)) continue;
+        const star = byId.get(neighborId);
+        if (!star || star.status !== 'active' || star.disputed) continue;
+        if (star.validUntil && Date.parse(star.validUntil) < at) continue;
+        seen.add(neighborId);
+        extras.push({
+          star,
+          map: data.map,
+          score: hit.score * 0.42,
+          bm25: 0,
+          expanded: true,
+        });
+      }
+    }
+    if (!extras.length) return hits;
+    metrics.graphExpansions += 1;
+    return hits.concat(extras.sort((a, b) => b.score - a.score)).sort(
+      (a, b) => b.score - a.score,
+    );
+  }
+
   function recallForAgent(agent, mapId, query, turn = 0) {
     if (settings.privacyIncognito) return { text: '', count: 0, starIds: [] };
     if (isSessionMuted(agent)) return { text: '', count: 0, starIds: [] };
@@ -1039,9 +1156,12 @@ export function apply(ctx) {
     metrics.recalls += 1;
     metrics.lastRecallAt = nowIso();
     const topK = Math.max(1, Number(settings.topK) || 6);
-    const hits = searchInternal(agent, mapId, query, Math.min(50, topK * 3))
-      .filter((hit) => !isRecallSuppressed(agent?.id, hit.star.id, turn))
-      .slice(0, topK);
+    let hits = searchInternal(agent, mapId, query, Math.min(50, topK * 3))
+      .filter((hit) => !isRecallSuppressed(agent?.id, hit.star.id, turn));
+    if (hits.length < topK) {
+      hits = expandHitsWithGraph(mapId, hits, topK);
+    }
+    hits = hits.slice(0, topK);
     if (!hits.length) return { text: '', count: 0, starIds: [] };
     const lines = [];
     const touched = new Set();
@@ -1207,7 +1327,7 @@ export function apply(ctx) {
       { field: 'created', from: null, to: title },
     ]);
     maps.get(mapId).stars.push(star);
-    invalidateIndex(mapId);
+    invalidateIndex(mapId, star.id);
     scheduleMapSave(mapId);
     return star;
   }
@@ -1327,7 +1447,7 @@ export function apply(ctx) {
           'status',
         ]),
       );
-      invalidateIndex(existing.mapId);
+      invalidateIndex(existing.mapId, existing.id);
       scheduleMapSave(existing.mapId);
       metrics.saves += 1;
       metrics.lastSaveAt = nowIso();
@@ -1358,7 +1478,7 @@ export function apply(ctx) {
           { field: 'disputed', from: false, to: true },
         ]);
       }
-      invalidateIndex(mapId);
+      invalidateIndex(mapId, best.star.id);
       maps.get(mapId).edges.push({
         id: uid('ed'),
         from: star.id,
@@ -1579,7 +1699,7 @@ export function apply(ctx) {
         recordStarHistory(found.star, 'model', [
           { field: 'status', from: beforeStatus, to: 'archived' },
         ]);
-        invalidateIndex(found.star.mapId);
+        invalidateIndex(found.star.mapId, found.star.id);
         scheduleMapSave(found.star.mapId);
         return { archived: true };
       },
@@ -1834,7 +1954,7 @@ export function apply(ctx) {
             found.star.updatedAt = nowIso();
             found.star.version = Number(found.star.version || 1) + 1;
             recordStarHistory(found.star, 'user', diffFields(before, found.star, changedFields));
-            invalidateIndex(found.star.mapId);
+            invalidateIndex(found.star.mapId, found.star.id);
             await persistMap(found.star.mapId);
             sendJson(res, 200, { star: found.star });
             return;
@@ -1898,7 +2018,7 @@ export function apply(ctx) {
             recordStarHistory(found.star, 'user', [
               { field: 'restore', from: current, to: target },
             ]);
-            invalidateIndex(found.star.mapId);
+            invalidateIndex(found.star.mapId, found.star.id);
             await persistMap(found.star.mapId);
             sendJson(res, 200, { star: found.star });
             return;
@@ -1916,7 +2036,7 @@ export function apply(ctx) {
             for (const constellation of found.data.constellations) {
               constellation.starIds = (constellation.starIds || []).filter((starId) => starId !== id);
             }
-            invalidateIndex(found.star.mapId);
+            invalidateIndex(found.star.mapId, found.star.id);
             await persistMap(found.star.mapId);
             sendJson(res, 200, { deleted: true });
             return;
@@ -2106,7 +2226,8 @@ export function apply(ctx) {
                 edge.resolvedAt = nowIso();
               }
             }
-            invalidateIndex(keep.star.mapId);
+            invalidateIndex(keep.star.mapId, keep.star.id);
+            invalidateIndex(drop.star.mapId, drop.star.id);
             recordStarHistory(
               keep.star,
               'user',
