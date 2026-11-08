@@ -1195,7 +1195,7 @@ export function apply(ctx) {
     return selected;
   }
 
-  function searchAcrossMaps(mapIds, query, limit) {
+  function searchAcrossMaps(mapIds, query, limit, options = {}) {
     const queryTerms = tokensOf(query);
     if (!queryTerms.size) return [];
     const searchStarted = Date.now();
@@ -1253,10 +1253,27 @@ export function apply(ctx) {
       }
     }
     hits.sort((a, b) => b.score - a.score);
+    let results = diversifyHits(hits, clamp(Number(limit) || 8, 1, 50));
+    if (options.graph && results.length) {
+      const grouped = new Map();
+      for (const hit of results) {
+        const group = grouped.get(hit.map.id) || [];
+        group.push(hit);
+        grouped.set(hit.map.id, group);
+      }
+      const expanded = [];
+      for (const [mapId, group] of grouped) {
+        expanded.push(...expandHitsWithGraph(mapId, group, results.length));
+      }
+      results = diversifyHits(
+        expanded.sort((a, b) => b.score - a.score),
+        clamp(Number(limit) || 8, 1, 50),
+      );
+    }
     metrics.searches += 1;
     metrics.lastSearchMs = Date.now() - searchStarted;
     metrics.lastSearchAt = nowIso();
-    return diversifyHits(hits, clamp(Number(limit) || 8, 1, 50));
+    return results;
   }
 
   function searchInternal(agent, mapId, query, limit) {
@@ -2513,7 +2530,8 @@ export function apply(ctx) {
           if (method === 'GET' && parts[0] === 'search') {
             const query = url.searchParams.get('q') || '';
             const limit = Number(url.searchParams.get('limit')) || 20;
-            const hits = searchAcrossMaps([...maps.keys()], query, limit);
+            const graph = url.searchParams.get('graph') === '1';
+            const hits = searchAcrossMaps([...maps.keys()], query, limit, { graph });
             sendJson(res, 200, {
               query,
               stars: hits.map(compactHit),

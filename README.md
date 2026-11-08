@@ -150,6 +150,8 @@ rian-memory-star-path/
   cordis.patch.yml      bundle patch
   locale/               中英文标题/描述
   tests/regression.mjs  回归脚本
+  tests/journal.mjs     journal 写入专项
+  tests/graph.mjs       图关系召回专项
 ```
 
 ### 回归测试
@@ -158,6 +160,9 @@ rian-memory-star-path/
 
 ```powershell
 node tests/regression.mjs
+node tests/graph.mjs
+$env:DSH_MEMORY_DATA_DIR="$env:USERPROFILE\.dsh\profiles\desktop\plugin-data\rian-memory-star-path"
+node tests/journal.mjs
 ```
 
 默认 API：
