@@ -4,6 +4,8 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const API = '/plugins/rian-memory-star-path/api-v2';
+    const VIEWPORT_CACHE_STARS = 7000;
+    const VIEWPORT_CACHE_EDGES = 24000;
 
     const THEMES = {
       dark: {
@@ -1237,6 +1239,42 @@ void main() {
           publicMapId: value.publicMapId,
           total: value.total,
         };
+        if (bucket.stars.size > VIEWPORT_CACHE_STARS) {
+          const cx = -pan2dRef.current.x;
+          const cy = -pan2dRef.current.y;
+          const target = Math.floor(VIEWPORT_CACHE_STARS * 0.85);
+          const evicted = new Set();
+          const overflow = [...bucket.stars.values()]
+            .map((star) => ({
+              id: star.id,
+              distance: Math.hypot(star.viewportX - cx, star.viewportY - cy),
+            }))
+            .sort((a, b) => b.distance - a.distance)
+            .slice(0, bucket.stars.size - target);
+          for (const item of overflow) {
+            evicted.add(item.id);
+            bucket.stars.delete(item.id);
+            bucket.positions.delete(item.id);
+          }
+          for (const [key, edge] of bucket.edges) {
+            if (evicted.has(edge.from) || evicted.has(edge.to)) bucket.edges.delete(key);
+          }
+          viewportDirtyRef.current = true;
+        }
+        if (bucket.edges.size > VIEWPORT_CACHE_EDGES) {
+          const target = Math.floor(VIEWPORT_CACHE_EDGES * 0.85);
+          for (const [key, edge] of bucket.edges) {
+            if (bucket.edges.size <= target) break;
+            if (!bucket.stars.has(edge.from) || !bucket.stars.has(edge.to)) {
+              bucket.edges.delete(key);
+            }
+          }
+          for (const key of bucket.edges.keys()) {
+            if (bucket.edges.size <= target) break;
+            bucket.edges.delete(key);
+          }
+          viewportDirtyRef.current = true;
+        }
       }, []);
 
       const collectRenderedViewport = React.useCallback(() => {
