@@ -237,6 +237,7 @@ export function apply(ctx) {
     journalCompactions: 0,
     layoutBuilds: 0,
     lastLayoutMs: 0,
+    viewportRequests: 0,
     searchCandidates: 0,
     graphExpansions: 0,
     lastSearchMs: 0,
@@ -2311,6 +2312,7 @@ export function apply(ctx) {
             const padding = Math.max(0, Number(url.searchParams.get('pad')) || 260);
             const limit = clamp(Number(url.searchParams.get('limit')) || 8000, 100, 20000);
             const viewport = viewportForMap(parts[1], cx, cy, width, height, padding, limit);
+            metrics.viewportRequests += 1;
             sendJson(res, 200, {
               map: data.map,
               publicMapId: index.publicMapId,

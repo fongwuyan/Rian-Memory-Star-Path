@@ -1151,7 +1151,6 @@ void main() {
       const viewportSeqRef = React.useRef(0);
       const viewportRequestRef = React.useRef({ inFlight: false, pending: null });
       const viewportTimerRef = React.useRef(0);
-      const lastViewportRef = React.useRef(null);
       const fetchViewportRef = React.useRef(null);
       const [viewportLoading, setViewportLoading] = React.useState(false);
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1300,7 +1299,6 @@ void main() {
             });
             setSelectedId(null);
             await fetchViewport(mapId, 0, 0, true);
-            lastViewportRef.current = { mapId, cx: 0, cy: 0 };
           } catch (cause) {
             setError(String(cause.message || cause));
           }
@@ -1313,11 +1311,6 @@ void main() {
         if (!mapId) return;
         const cx = -pan2dRef.current.x;
         const cy = -pan2dRef.current.y;
-        const last = lastViewportRef.current;
-        if (last && last.mapId === mapId && Math.hypot(cx - last.cx, cy - last.cy) < 120) {
-          return;
-        }
-        lastViewportRef.current = { mapId, cx, cy };
         fetchViewport(mapId, cx, cy, false);
       }, [fetchViewport]);
 
@@ -1841,7 +1834,7 @@ void main() {
             viewportTimerRef.current = window.setTimeout(() => {
               viewportTimerRef.current = 0;
               refreshViewport();
-            }, 120);
+            }, 80);
           }
           return;
         }
