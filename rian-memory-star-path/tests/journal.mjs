@@ -41,6 +41,28 @@ try {
   let journal = readFileSync(journalFile, 'utf8');
   assert.ok(journal.includes('"op":"upsert"'), 'journal should contain upsert');
 
+  const neighbor = await request('/stars', {
+    method: 'POST',
+    body: JSON.stringify({
+      mapId: map.map.id,
+      title: `日志邻居-${stamp}`,
+      fact: 'journal edge 写入验证。',
+      type: 'fact',
+      confidence: 0.95,
+    }),
+  });
+  await request('/edges', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: star.star.id,
+      to: neighbor.star.id,
+      relation: 'related',
+    }),
+  });
+  journal = readFileSync(journalFile, 'utf8');
+  assert.ok(journal.includes('"op":"edge.upsert"'), 'journal should contain edge upsert');
+  assert.equal(statSync(mapFile).mtimeMs, before, 'edge journal should not rewrite map snapshot');
+
   await request(`/stars/${encodeURIComponent(star.star.id)}`, {
     method: 'PATCH',
     body: JSON.stringify({ title: `日志-${stamp}-改` }),

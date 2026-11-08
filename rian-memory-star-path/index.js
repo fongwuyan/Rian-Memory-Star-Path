@@ -255,6 +255,7 @@ export function apply(ctx) {
   const indexCache = new Map();
   const layoutCache = new Map();
   const prewarming = new Set();
+  let starLocator = null;
   const dirtyIndex = new Set();
   const dirtyStars = new Map();
   const writeQueues = new Map();
@@ -315,6 +316,14 @@ export function apply(ctx) {
           if (Number.isFinite(record.recallCount)) star.recallCount = record.recallCount;
           if (record.lastRecalledAt) star.lastRecalledAt = record.lastRecalledAt;
         }
+      } else if (record?.op === 'edge.upsert' && record.edge?.id) {
+        data.edges = data.edges || [];
+        const edge = record.edge;
+        const position = data.edges.findIndex((item) => item.id === edge.id);
+        if (position >= 0) data.edges[position] = edge;
+        else data.edges.push(edge);
+      } else if (record?.op === 'edge.delete' && record.id) {
+        data.edges = (data.edges || []).filter((edge) => edge.id !== record.id);
       } else if (record?.op === 'delete' && record.id) {
         data.stars = data.stars.filter((star) => star.id !== record.id);
         data.edges = (data.edges || []).filter(
@@ -658,8 +667,35 @@ export function apply(ctx) {
     );
   }
 
-  function persistStarDelta(mapId, starIds) {
+  function persistEdgeDelta(mapId, upserts = [], deletes = []) {
+    if ((!upserts.length && !deletes.length) || !mapId) return Promise.resolve();
     pageCache.delete(mapId);
+    return enqueueWrite(`map:${mapId}`, async () => {
+      const lines = [];
+      for (const edge of upserts) {
+        if (edge?.id) lines.push(`${JSON.stringify({ op: 'edge.upsert', edge })}\n`);
+      }
+      for (const id of deletes) {
+        if (id) lines.push(`${JSON.stringify({ op: 'edge.delete', id })}\n`);
+      }
+      if (!lines.length) return;
+      const payload = lines.join('');
+      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
+      journalBytes.set(mapId, nextBytes);
+      metrics.journalAppends += 1;
+      if (nextBytes > 8 * 1024 * 1024) {
+        metrics.journalCompactions += 1;
+        setTimeout(() => {
+          persistMap(mapId).catch((error) =>
+            console.error('[memory-star] compact journal failed', error),
+          );
+        }, 0);
+      }
+    });
+  }
+
+  function persistStarDelta(mapId, starIds) {    pageCache.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
       if (!data) return;
@@ -1131,6 +1167,7 @@ export function apply(ctx) {
 
   function invalidateIndex(mapId, starId) {
     if (!mapId) return;
+    starLocator = null;
     if (!starId) {
       dirtyIndex.add(mapId);
       dirtyStars.delete(mapId);
@@ -1777,21 +1814,54 @@ export function apply(ctx) {
   }
 
   function findStarAcross(id) {
-    for (const data of maps.values()) {
-      const star = data.stars.find((item) => item.id === id);
-      if (star) return { star, data };
+    if (!starLocator) {
+      starLocator = new Map();
+      for (const data of maps.values()) {
+        for (const star of data.stars) {
+          starLocator.set(star.id, { star, data });
+        }
+      }
     }
-    return null;
+    return starLocator.get(id) || null;
   }
 
   function similarStars(mapId, title, fact) {
     const data = maps.get(mapId);
     if (!data) return [];
     const query = tokensOf(`${title} ${fact}`);
-    return data.stars
-      .filter((star) => star.status !== 'archived' && star.status !== 'rejected')
-      .map((star) => ({ star, similarity: dice(query, tokensOf(`${star.title} ${star.fact}`)) }))
-      .sort((a, b) => b.similarity - a.similarity);
+    if (!query.size) return [];
+    const index = ensureIndex(mapId);
+    if (!index) return [];
+    const overlap = new Map();
+    for (const term of query) {
+      const posting = index.postings.get(term);
+      if (!posting) continue;
+      for (const starId of posting) {
+        overlap.set(starId, (overlap.get(starId) || 0) + 1);
+      }
+    }
+    const candidates = [...overlap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2000);
+    const results = candidates
+      .map(([starId]) => index.docs.get(starId)?.star)
+      .filter(
+        (star) =>
+          star && star.status !== 'archived' && star.status !== 'rejected',
+      )
+      .map((star) => ({
+        star,
+        similarity: dice(query, tokensOf(`${star.title} ${star.fact}`)),
+      }));
+    const seen = new Set(results.map((entry) => entry.star.id));
+    for (const star of data.stars) {
+      if (star.status !== 'pending' || seen.has(star.id)) continue;
+      results.push({
+        star,
+        similarity: dice(query, tokensOf(`${star.title} ${star.fact}`)),
+      });
+    }
+    return results.sort((a, b) => b.similarity - a.similarity);
   }
 
   function currentAgent(exec) {
@@ -1836,15 +1906,7 @@ export function apply(ctx) {
       throw new Error('Memory is disabled for this workspace.');
     }
     const candidates = similarStars(mapId, title, fact);
-    const normalized = (value) => String(value || '').toLowerCase().replace(/\s+/g, '').trim();
-    const exactKey = `${normalized(title)}\n${normalized(fact)}`;
-    const exactStar = (maps.get(mapId)?.stars || []).find(
-      (star) =>
-        star.status !== 'archived' &&
-        star.status !== 'rejected' &&
-        `${normalized(star.title)}\n${normalized(star.fact)}` === exactKey,
-    );
-    const best = exactStar ? { star: exactStar, similarity: 1 } : candidates[0];
+    const best = candidates[0];
     if (best && best.similarity > 0.8) {
       const existing = best.star;
       const before = {
@@ -1904,15 +1966,18 @@ export function apply(ctx) {
       };
     }
     const star = createStar(input, mapId, 'session', agent?.id);
+    const newEdges = [];
     if (best && best.similarity > 0.6) {
-      maps.get(mapId).edges.push({
+      const edge = {
         id: uid('ed'),
         from: star.id,
         to: best.star.id,
         relation: 'related',
         createdBy: 'model',
         createdAt: nowIso(),
-      });
+      };
+      maps.get(mapId).edges.push(edge);
+      newEdges.push(edge);
     }
     if (best && best.similarity > 0.45 && /不要|改用|不是|停止|换成|instead|switch/i.test(String(input.fact ?? ''))) {
       if (!best.star.disputed) {
@@ -1921,17 +1986,21 @@ export function apply(ctx) {
         recordStarHistory(best.star, 'model', [
           { field: 'disputed', from: false, to: true },
         ]);
+        scheduleMapSave(mapId, best.star.id);
       }
       invalidateIndex(mapId, best.star.id);
-      maps.get(mapId).edges.push({
+      const edge = {
         id: uid('ed'),
         from: star.id,
         to: best.star.id,
         relation: 'contradicts',
         createdBy: 'model',
         createdAt: nowIso(),
-      });
+      };
+      maps.get(mapId).edges.push(edge);
+      newEdges.push(edge);
     }
+    if (newEdges.length) await persistEdgeDelta(mapId, newEdges);
     metrics.saves += 1;
     metrics.lastSaveAt = nowIso();
     return {
@@ -2092,15 +2161,16 @@ export function apply(ctx) {
                 edge.to === from.star.id)),
         );
         if (exists) return { ok: true };
-        from.data.edges.push({
+        const edge = {
           id: uid('ed'),
           from: from.star.id,
           to: to.star.id,
           relation,
           createdBy: 'model',
           createdAt: nowIso(),
-        });
-        scheduleMapSave(from.star.mapId);
+        };
+        from.data.edges.push(edge);
+        await persistEdgeDelta(from.star.mapId, [edge]);
         return { ok: true };
       },
     });
@@ -2565,6 +2635,7 @@ export function apply(ctx) {
             await fs.unlink(mapPath(id)).catch(() => {});
             await fs.unlink(journalPath(id)).catch(() => {});
             layoutCache.delete(id);
+            starLocator = null;
             sendJson(res, 200, { deleted: true });
             return;
           }
@@ -2660,7 +2731,7 @@ export function apply(ctx) {
               createdAt: nowIso(),
             };
             data.edges.push(edge);
-            await persistMap(from.star.mapId);
+            await persistEdgeDelta(from.star.mapId, [edge]);
             sendJson(res, 201, { edge });
             return;
           }
@@ -3022,10 +3093,12 @@ export function apply(ctx) {
   ctx.effect(() => () => {
     for (const timer of saveTimers.values()) clearTimeout(timer);
     saveTimers.clear();
+    const writes = [];
     for (const mapId of maps.keys()) {
-      persistMap(mapId).catch(() => {});
+      writes.push(persistMap(mapId).catch(() => {}));
     }
-    persistIndex().catch(() => {});
-    persistBindings().catch(() => {});
+    writes.push(persistIndex().catch(() => {}));
+    writes.push(persistBindings().catch(() => {}));
+    return Promise.allSettled(writes);
   });
 }
