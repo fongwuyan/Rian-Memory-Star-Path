@@ -159,6 +159,7 @@ rian-memory-star-path/
   tests/feedback.mjs    记忆反馈专项
   tests/conflict.mjs    语义冲突专项
   tests/viewport-revision.mjs  视口 revision 专项
+  tests/backup-restore.mjs  备份 + journal 恢复专项
   tests/generate-realistic-map.mjs  生成真实场景测试星图
 ```
 
@@ -176,6 +177,7 @@ node tests/ingress.mjs
 node tests/feedback.mjs
 node tests/conflict.mjs
 node tests/viewport-revision.mjs
+node tests/backup-restore.mjs
 ```
 
 重建真实场景测试图（会删除旧的 `测试星图 10w`）：
