@@ -374,29 +374,32 @@ function run() {
 in vec2 a_position;
 in float a_size;
 in vec3 a_color;
-in vec2 a_corner;
 uniform vec2 u_resolution;
+uniform float u_sizeScale;
 out vec3 v_color;
-out vec2 v_corner;
 void main() {
-  vec2 point = a_position + a_corner * (a_size * 0.5);
-  vec2 clip = (point / u_resolution) * 2.0 - 1.0;
+  vec2 clip = (a_position / u_resolution) * 2.0 - 1.0;
   gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
+  gl_PointSize = a_size * u_sizeScale;
   v_color = a_color;
-  v_corner = a_corner;
 }`;
 
       const starFS = `#version 300 es
 precision mediump float;
 in vec3 v_color;
-in vec2 v_corner;
+uniform float u_alpha;
 out vec4 out_color;
 void main() {
-  float d = length(v_corner);
+  vec2 uv = gl_PointCoord * 2.0 - 1.0;
+  float d = length(uv);
   if (d > 1.0) discard;
-  float core = smoothstep(1.0, 0.0, d);
-  float glow = pow(core, 2.0);
-  out_color = vec4(v_color, clamp(core * 0.92 + glow * 0.32, 0.0, 1.0));
+  float core = smoothstep(0.62, 0.0, d);
+  float halo = smoothstep(1.0, 0.04, d) * 0.34;
+  float spikeH = max(0.0, 1.0 - abs(uv.y) * 7.0) * max(0.0, 1.0 - abs(uv.x) * 1.2);
+  float spikeV = max(0.0, 1.0 - abs(uv.x) * 7.0) * max(0.0, 1.0 - abs(uv.y) * 1.2);
+  float alpha = core * 0.96 + halo + (spikeH + spikeV) * 0.5;
+  vec3 color = mix(v_color, vec3(1.0), core);
+  out_color = vec4(color, clamp(alpha, 0.0, 1.0) * u_alpha);
 }`;
 
       const lineVS = `#version 300 es
@@ -453,32 +456,19 @@ void main() {
       const starPosBuffer = gl.createBuffer();
       const starSizeBuffer = gl.createBuffer();
       const starColorBuffer = gl.createBuffer();
-      const starCornerBuffer = gl.createBuffer();
       gl.bindVertexArray(starVao);
       const starPosLoc = gl.getAttribLocation(starProgram, 'a_position');
       const starSizeLoc = gl.getAttribLocation(starProgram, 'a_size');
       const starColorLoc = gl.getAttribLocation(starProgram, 'a_color');
-      const starCornerLoc = gl.getAttribLocation(starProgram, 'a_corner');
       gl.bindBuffer(gl.ARRAY_BUFFER, starPosBuffer);
       gl.enableVertexAttribArray(starPosLoc);
       gl.vertexAttribPointer(starPosLoc, 2, gl.FLOAT, false, 0, 0);
-      gl.vertexAttribDivisor(starPosLoc, 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, starSizeBuffer);
       gl.enableVertexAttribArray(starSizeLoc);
       gl.vertexAttribPointer(starSizeLoc, 1, gl.FLOAT, false, 0, 0);
-      gl.vertexAttribDivisor(starSizeLoc, 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
       gl.enableVertexAttribArray(starColorLoc);
       gl.vertexAttribPointer(starColorLoc, 3, gl.FLOAT, false, 0, 0);
-      gl.vertexAttribDivisor(starColorLoc, 1);
-      gl.bindBuffer(gl.ARRAY_BUFFER, starCornerBuffer);
-      gl.bufferData(
-        gl.ARRAY_BUFFER,
-        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-        gl.STATIC_DRAW,
-      );
-      gl.enableVertexAttribArray(starCornerLoc);
-      gl.vertexAttribPointer(starCornerLoc, 2, gl.FLOAT, false, 0, 0);
 
       const lineVao = gl.createVertexArray();
       const lineBuffer = gl.createBuffer();
@@ -490,6 +480,8 @@ void main() {
       gl.bindVertexArray(null);
 
       const starResLoc = gl.getUniformLocation(starProgram, 'u_resolution');
+      const starSizeScaleLoc = gl.getUniformLocation(starProgram, 'u_sizeScale');
+      const starAlphaLoc = gl.getUniformLocation(starProgram, 'u_alpha');
       const lineResLoc = gl.getUniformLocation(lineProgram, 'u_resolution');
       const lineColorLoc = gl.getUniformLocation(lineProgram, 'u_color');
 
@@ -554,7 +546,14 @@ void main() {
             gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
             gl.bindBuffer(gl.ARRAY_BUFFER, starColorBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
-            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            gl.uniform1f(starSizeScaleLoc, 2.15);
+            gl.uniform1f(starAlphaLoc, 0.16);
+            gl.drawArrays(gl.POINTS, 0, count);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.uniform1f(starSizeScaleLoc, 1);
+            gl.uniform1f(starAlphaLoc, 1);
+            gl.drawArrays(gl.POINTS, 0, count);
           }
           return projected;
         },
@@ -2142,9 +2141,9 @@ void main() {
           'style',
           null,
           `
-.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.15);opacity:.9;mix-blend-mode:screen;background:radial-gradient(circle at 22% 30%,var(--ms-nebula-1),transparent 42%),radial-gradient(circle at 78% 62%,var(--ms-nebula-2),transparent 45%),radial-gradient(circle at 52% 82%,var(--ms-nebula-3),transparent 40%);animation:ms-drift 26s ease-in-out infinite alternate;will-change:transform}
-.ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(34px);opacity:.32;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 32%,var(--ms-nebula-2),transparent 68%,var(--ms-nebula-3),transparent);animation:ms-spin 90s linear infinite}
-.ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(200,220,255,.45) 1px,transparent 1px),radial-gradient(circle,rgba(255,255,255,.28) 1px,transparent 1px);background-size:97px 97px,151px 151px;background-position:0 0,40px 60px;opacity:.35}
+.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(30px) saturate(1.35);opacity:.98;mix-blend-mode:screen;background:linear-gradient(118deg,transparent 30%,rgba(160,180,255,.1) 42%,rgba(118,92,230,.18) 50%,rgba(60,140,200,.1) 58%,transparent 72%),radial-gradient(ellipse at 72% 22%,var(--ms-nebula-1),transparent 52%),radial-gradient(ellipse at 18% 74%,var(--ms-nebula-2),transparent 50%),radial-gradient(ellipse at 54% 84%,var(--ms-nebula-3),transparent 46%),radial-gradient(circle at 42% 44%,rgba(220,230,255,.06),transparent 30%);animation:ms-drift 30s ease-in-out infinite alternate;will-change:transform}
+.ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(44px);opacity:.26;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 30%,var(--ms-nebula-2),transparent 64%,var(--ms-nebula-3),transparent);animation:ms-spin 120s linear infinite}
+.ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.95) 0 1px,transparent 1.6px),radial-gradient(circle,rgba(170,210,255,.72) 0 1.2px,transparent 1.8px),radial-gradient(circle,rgba(255,220,170,.58) 0 1.4px,transparent 2px),radial-gradient(circle,rgba(200,180,255,.5) 0 1px,transparent 1.5px);background-size:67px 67px,109px 109px,173px 173px,251px 251px;background-position:0 0,37px 53px,94px 21px,141px 87px;opacity:.64;animation:ms-twinkle 9s ease-in-out infinite alternate}
 .ms-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;background:radial-gradient(circle at 50% 45%,transparent 38%,var(--ms-vignette) 100%)}
 .ms-glass{backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12)}
 .ms-btn{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
@@ -2163,6 +2162,7 @@ void main() {
 .ms-shell ::selection{background:color-mix(in srgb,var(--ms-accent) 35%,transparent);color:var(--ms-text)}
 @keyframes ms-drift{from{transform:translate3d(-2%,-1%,0) scale(1.04)}to{transform:translate3d(2%,1%,0) scale(1.12)}}
 @keyframes ms-spin{to{transform:rotate(360deg)}}
+@keyframes ms-twinkle{from{opacity:.32}to{opacity:.68}}
 @keyframes ms-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 `,
         ),
@@ -2315,7 +2315,7 @@ void main() {
         ),
         h(
           'div',
-          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: 'var(--ms-bg)' } },
+          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#02030A' } },
           h('div', { className: 'ms-nebula', 'aria-hidden': true }),
           h('canvas', {
             ref: canvasRef,
@@ -2335,10 +2335,7 @@ void main() {
               position: 'relative',
               zIndex: 1,
               cursor: 'grab',
-              background:
-                settings?.viewMode === '2d'
-                  ? 'linear-gradient(135deg, #0B1026, #131A3A)'
-                  : 'transparent',
+              background: 'transparent',
               outline: 'none',
             },
           }),
