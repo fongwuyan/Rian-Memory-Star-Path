@@ -797,7 +797,7 @@ weight = clamp(
 
 ### 10.2 持久化
 
-- 地图全量快照 + append-only journal；快照与备份使用紧凑 JSON；
+- 地图全量快照 + append-only journal；快照与备份使用紧凑 JSON；3000+ 星地图按 4000 星分片，manifest 原子切换 generation；
 - 单星 upsert/delete、边/星座 upsert/delete、召回 stats 追加到 `*.journal.ndjson`，启动时回放；
 - 设置 `journalFsync: true` 时 journal 追加后 fsync；profile 级 `plugin.lock` 阻止多进程同时写；
 - 手动 `POST /stars` 与模型 `memory_save` 共用 `upsertStarToMap`，同样做相似合并、连边和 history；
@@ -844,7 +844,9 @@ weight = clamp(
 ```text
 <插件数据目录>/
   index.json                  # schemaVersion + 星图清单 + 统计
-  maps/<mapId>.json           # 图 + 星 + 边 + 星座（紧凑快照）
+  maps/<mapId>.json           # 小图紧凑快照
+  maps/<mapId>.snapshot.json  # 大图分片 manifest（map/edges/constellations）
+  maps/<mapId>.snapshot/<gen>/stars-*.json  # 大图 4000 星/片
   maps/<mapId>.json.journal.ndjson  # 写前日志，4MB 后分段为 .0002.ndjson...
   meta/<mapId>.json           # 地图统计 sidecar，供启动懒加载
   backups/backup-<date>.zip   # 启动自动备份；未加载地图含原始快照 + journal

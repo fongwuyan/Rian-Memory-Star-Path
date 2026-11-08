@@ -236,6 +236,7 @@ export function apply(ctx) {
   const maps = new Map();
   const unloadedLoads = new Map();
   const LAZY_MIN_STARS = 3000;
+  const MAP_SHARD_STARS = 4000;
   const pageCache = new Map();
   const bindings = new Map();
   const recallCache = new Map();
@@ -340,6 +341,22 @@ export function apply(ctx) {
     return path.join(indexCacheDir, `${mapId}.bin`);
   }
 
+  function mapSnapshotMetaPath(mapId) {
+    return path.join(mapsDir, `${mapId}.snapshot.json`);
+  }
+
+  function mapSnapshotDir(mapId) {
+    return path.join(mapsDir, `${mapId}.snapshot`);
+  }
+
+  function mapShardPath(mapId, generation, index) {
+    return path.join(
+      mapSnapshotDir(mapId),
+      generation,
+      `stars-${String(index).padStart(3, '0')}.json`,
+    );
+  }
+
   async function writeMapMeta(mapId, data) {
     const stats = mapStatsOf(data);
     await writeJsonAtomic(
@@ -347,6 +364,105 @@ export function apply(ctx) {
       { mapId, savedAt: nowIso(), stats },
       { pretty: false },
     );
+  }
+
+  async function writeShardedMap(mapId, data) {
+    const generation = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const shardCount = Math.max(1, Math.ceil(data.stars.length / MAP_SHARD_STARS));
+    const directory = path.join(mapSnapshotDir(mapId), generation);
+    await fs.mkdir(directory, { recursive: true });
+    await Promise.all(
+      Array.from({ length: shardCount }, (_, index) => {
+        const chunk = data.stars.slice(
+          index * MAP_SHARD_STARS,
+          (index + 1) * MAP_SHARD_STARS,
+        );
+        return writeJsonAtomic(
+          mapShardPath(mapId, generation, index),
+          chunk,
+          { pretty: false },
+        );
+      }),
+    );
+    await writeJsonAtomic(
+      mapSnapshotMetaPath(mapId),
+      {
+        version: 1,
+        generation,
+        shardCount,
+        map: data.map,
+        edges: data.edges || [],
+        constellations: data.constellations || [],
+      },
+      { pretty: false },
+    );
+    try {
+      const entries = await fs.readdir(mapSnapshotDir(mapId));
+      await Promise.all(
+        entries
+          .filter((name) => name !== generation)
+          .map((name) =>
+            fs.rm(path.join(mapSnapshotDir(mapId), name), {
+              recursive: true,
+              force: true,
+            }),
+          ),
+      );
+    } catch {
+      // old generations are best-effort cleanup
+    }
+    await fs.unlink(mapPath(mapId)).catch(() => {});
+  }
+
+  async function readMapData(mapId) {
+    try {
+      const meta = JSON.parse(await fs.readFile(mapSnapshotMetaPath(mapId), 'utf8'));
+      if (meta?.version === 1 && meta.generation && meta.shardCount) {
+        const shards = await Promise.all(
+          Array.from({ length: meta.shardCount }, (_, index) =>
+            fs.readFile(mapShardPath(mapId, meta.generation, index), 'utf8'),
+          ),
+        );
+        const stars = shards.flatMap((raw) => JSON.parse(raw));
+        return {
+          map: meta.map,
+          stars,
+          edges: meta.edges || [],
+          constellations: meta.constellations || [],
+        };
+      }
+    } catch {
+      // fall back to the legacy single-file snapshot
+    }
+    return JSON.parse(await fs.readFile(mapPath(mapId), 'utf8'));
+  }
+
+  async function removeMapSnapshot(mapId) {
+    await fs.unlink(mapPath(mapId)).catch(() => {});
+    await fs.unlink(mapSnapshotMetaPath(mapId)).catch(() => {});
+    await fs.rm(mapSnapshotDir(mapId), { recursive: true, force: true }).catch(() => {});
+  }
+
+  async function directorySize(directory) {
+    let total = 0;
+    let entries = [];
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+    for (const entry of entries) {
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) total += await directorySize(target);
+      else {
+        try {
+          total += (await fs.stat(target)).size;
+        } catch {
+          // file disappeared during the scan
+        }
+      }
+    }
+    return total;
   }
 
   function mapStatsOf(data) {
@@ -376,7 +492,7 @@ export function apply(ctx) {
     const loading = (async () => {
       let loaded;
       try {
-        loaded = JSON.parse(await fs.readFile(mapPath(mapId), 'utf8'));
+        loaded = await readMapData(mapId);
       } catch {
         loaded = {
           map: current.map,
@@ -592,7 +708,8 @@ export function apply(ctx) {
       for (const data of maps.values()) {
         if (data.unloaded) {
           try {
-            files[`maps/${data.map.id}.json`] = await fs.readFile(mapPath(data.map.id), 'utf8');
+            const snapshot = await readMapData(data.map.id);
+            files[`maps/${data.map.id}.json`] = JSON.stringify(snapshot);
             const journal = await readJournalText(data.map.id).catch(() => '');
             if (journal) files[`journals/${data.map.id}.ndjson`] = journal;
           } catch {
@@ -679,7 +796,11 @@ export function apply(ctx) {
     return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
       if (!data || data.unloaded) return undefined;
-      await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
+      if (data.stars.length >= LAZY_MIN_STARS) {
+        await writeShardedMap(mapId, data);
+      } else {
+        await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
+      }
       await writeMapMeta(mapId, data);
       await removeJournalSegments(mapId);
       return undefined;
@@ -1225,11 +1346,16 @@ export function apply(ctx) {
         if (maps.has(map.id)) return;
         if (bootSettings.lazyMaps !== false && !bootKeep.has(map.id)) {
           try {
-            const [meta, metaStat, mapStat] = await Promise.all([
+            const [meta, metaStat] = await Promise.all([
               fs.readFile(mapMetaPath(map.id), 'utf8').then((raw) => JSON.parse(raw)),
               fs.stat(mapMetaPath(map.id)),
-              fs.stat(mapPath(map.id)),
             ]);
+            let mapStat = null;
+            try {
+              mapStat = await fs.stat(mapPath(map.id));
+            } catch {
+              mapStat = await fs.stat(mapSnapshotMetaPath(map.id));
+            }
             if (meta?.stats && mapStat.mtimeMs <= metaStat.mtimeMs) {
               maps.set(map.id, {
                 map,
@@ -1246,7 +1372,7 @@ export function apply(ctx) {
           }
         }
         try {
-          maps.set(map.id, JSON.parse(await fs.readFile(mapPath(map.id), 'utf8')));
+          maps.set(map.id, await readMapData(map.id));
         } catch {
           maps.set(map.id, { map, stars: [], edges: [], constellations: [] });
         }
@@ -3455,7 +3581,7 @@ export function apply(ctx) {
             }
             await persistIndex();
             if (bindingsChanged) await persistBindings();
-            await fs.unlink(mapPath(id)).catch(() => {});
+            await removeMapSnapshot(id);
             await removeJournalSegments(id);
             await fs.unlink(mapMetaPath(id)).catch(() => {});
             await fs.unlink(mapIndexCachePath(id)).catch(() => {});
@@ -3916,7 +4042,12 @@ export function apply(ctx) {
               try {
                 snapshotBytes += (await fs.stat(mapPath(map.id))).size;
               } catch {
-                // map may not have been persisted yet
+                try {
+                  snapshotBytes += (await fs.stat(mapSnapshotMetaPath(map.id))).size;
+                  snapshotBytes += await directorySize(mapSnapshotDir(map.id));
+                } catch {
+                  // map may not have been persisted yet
+                }
               }
             }
             const mapsDetail = index.maps.map((map, position) => {

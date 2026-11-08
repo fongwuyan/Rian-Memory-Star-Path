@@ -101,7 +101,9 @@ index.json                星图索引
 bindings.json             会话 -> 项目图绑定
 settings.json             插件设置（含 journalFsync）
 plugin.lock               profile 独占锁，关闭时释放
-maps/<mapId>.json         单图数据（星、边、星座、星尘）
+maps/<mapId>.json         小图快照
+maps/<mapId>.snapshot.json 大图分片 manifest
+maps/<mapId>.snapshot/    大图 generation 分片
 meta/<mapId>.json         地图统计 sidecar（启动懒加载）
 backups/backup-*.zip      启动自动备份，最近 5 份
 ```

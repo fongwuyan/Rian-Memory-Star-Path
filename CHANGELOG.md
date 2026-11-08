@@ -7,6 +7,7 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 大图快照分片：3000+ 星地图按 4000 星写入 generation 分片 + `snapshot.json` manifest，读取并行合并；备份合成单 JSON，删除地图清理所有 generation。
 - journal 按 4MB 分段（可配 `journalSegmentBytes`），回放按段拼接；新增跨段写入与清理专项测试。
 - 索引缓存升级为 V8 二进制（21MB），改为首次搜索前加载、不拖慢地图打开；实测总耗时约 2.35s vs 冷建 2.7s，仍默认关闭。
 - 新增 `tests/backup-restore.mjs`：固定验证备份 zip 中的 snapshot + journal 导入恢复。
