@@ -1001,10 +1001,21 @@ export function apply(ctx) {
       positions.set(entry.star.id, { x: point.x, y: point.y });
       starsById.set(entry.star.id, entry.star);
     });
+    const gridCell = 160;
+    const grid = new Map();
+    for (const [starId, point] of positions) {
+      const key = `${Math.floor(point.x / gridCell)}:${Math.floor(point.y / gridCell)}`;
+      const bucket = grid.get(key);
+      const entry = { id: starId, x: point.x, y: point.y };
+      if (bucket) bucket.push(entry);
+      else grid.set(key, [entry]);
+    }
     const layout = {
       mapId,
       positions,
       starsById,
+      grid,
+      gridCell,
       total: count,
       maxRadius: points.length ? points[0].distance : 0,
       builtAt: Date.now(),
@@ -1015,18 +1026,36 @@ export function apply(ctx) {
     return layout;
   }
 
+  function compactViewportStar(star) {
+    return {
+      id: star.id,
+      mapId: star.mapId,
+      title: star.title,
+      type: star.type,
+      status: star.status,
+      confidence: star.confidence,
+      importance: star.importance,
+      pinned: Boolean(star.pinned),
+      recallCount: star.recallCount,
+      lastRecalledAt: star.lastRecalledAt,
+      createdAt: star.createdAt,
+      updatedAt: star.updatedAt,
+      version: star.version,
+    };
+  }
+
   function viewportForMap(mapId, cx, cy, width, height, padding = 260, limit = 8000) {
     const layout = buildMapLayout(mapId);
     const data = maps.get(mapId);
     if (!layout || !data) return { stars: [], positions: [], edges: [], total: 0 };
-    const activeById = new Map(
-      data.stars
-        .filter((star) => star.status === 'active' && !star.disputed)
-        .map((star) => [star.id, star]),
-    );
+    const starsById = layout.starsById;
     const missing = [];
-    for (const starId of activeById.keys()) {
-      if (!layout.positions.has(starId)) missing.push(starId);
+    let total = 0;
+    for (const star of data.stars) {
+      if (star.status !== 'active' || star.disputed) continue;
+      total += 1;
+      if (!starsById.has(star.id)) starsById.set(star.id, star);
+      if (!layout.positions.has(star.id)) missing.push(star.id);
     }
     if (missing.length) {
       missing.sort();
@@ -1034,10 +1063,13 @@ export function apply(ctx) {
       for (const starId of missing) {
         const angle = (hashSeed(starId) / 4294967296) * Math.PI * 2;
         radius += 42;
-        layout.positions.set(starId, {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        });
+        const point = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+        layout.positions.set(starId, point);
+        const key = `${Math.floor(point.x / layout.gridCell)}:${Math.floor(point.y / layout.gridCell)}`;
+        const bucket = layout.grid.get(key);
+        const entry = { id: starId, x: point.x, y: point.y };
+        if (bucket) bucket.push(entry);
+        else layout.grid.set(key, [entry]);
       }
       layout.maxRadius = radius;
     }
@@ -1048,19 +1080,30 @@ export function apply(ctx) {
     const top = cy - halfHeight;
     const bottom = cy + halfHeight;
     const hits = [];
-    for (const [id, point] of layout.positions) {
-      if (point.x < left || point.x > right || point.y < top || point.y > bottom) continue;
-      const star = activeById.get(id);
-      if (star) hits.push({ star, x: point.x, y: point.y });
+    const firstCol = Math.floor(left / layout.gridCell);
+    const lastCol = Math.floor(right / layout.gridCell);
+    const firstRow = Math.floor(top / layout.gridCell);
+    const lastRow = Math.floor(bottom / layout.gridCell);
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      for (let col = firstCol; col <= lastCol; col += 1) {
+        const bucket = layout.grid.get(`${col}:${row}`);
+        if (!bucket) continue;
+        for (const point of bucket) {
+          if (point.x < left || point.x > right || point.y < top || point.y > bottom) continue;
+          const star = starsById.get(point.id);
+          if (!star || star.status !== 'active' || star.disputed) continue;
+          hits.push({ star, x: point.x, y: point.y });
+        }
+      }
     }
     hits.sort((a, b) => weightOf(b.star) - weightOf(a.star));
     const selected = hits.slice(0, limit);
     const ids = new Set(selected.map((hit) => hit.star.id));
     return {
-      stars: selected.map((hit) => hit.star),
+      stars: selected.map((hit) => compactViewportStar(hit.star)),
       positions: selected.map((hit) => ({ id: hit.star.id, x: hit.x, y: hit.y })),
       edges: (data.edges || []).filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
-      total: activeById.size,
+      total,
       truncated: hits.length > selected.length,
     };
   }
@@ -2376,6 +2419,16 @@ export function apply(ctx) {
             return;
           }
 
+          if (method === 'GET' && parts[0] === 'stars' && parts[1]) {
+            const found = findStarAcross(parts[1]);
+            if (!found) {
+              sendJson(res, 404, { error: 'memory not found' });
+              return;
+            }
+            sendJson(res, 200, { star: found.star, map: found.data.map });
+            return;
+          }
+
           if (method === 'PATCH' && parts[0] === 'stars' && parts[1]) {
             const body = await readBody(req);
             const found = findStarAcross(parts[1]);
@@ -2474,6 +2527,11 @@ export function apply(ctx) {
             found.data.edges = found.data.edges.filter((edge) => edge.from !== id && edge.to !== id);
             for (const constellation of found.data.constellations) {
               constellation.starIds = (constellation.starIds || []).filter((starId) => starId !== id);
+            }
+            const layout = layoutCache.get(found.star.mapId);
+            if (layout) {
+              layout.starsById.delete(id);
+              layout.positions.delete(id);
             }
             invalidateIndex(found.star.mapId, found.star.id);
             await persistStarDelta(found.star.mapId, new Set([id]));

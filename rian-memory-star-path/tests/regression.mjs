@@ -93,6 +93,9 @@ async function main() {
     viewport.positions.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)),
     'expected finite viewport positions',
   );
+  assert.equal(viewport.stars[0].fact, undefined, 'viewport payload should be compact');
+  const detail = await request(`/stars/${encodeURIComponent(viewport.stars[0].id)}`);
+  assert.ok(detail.star.fact, 'detail endpoint should return full star');
 
   const probeTitle = `索引探针${stamp}`;
   const probe = await createStar(map.id, probeTitle, `增量索引验证 ${stamp}`, ['索引测试']);

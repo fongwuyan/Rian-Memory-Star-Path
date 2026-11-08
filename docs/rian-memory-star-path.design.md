@@ -919,7 +919,7 @@ POST  /plugins/rian-memory-star/api/maps
 
 - 只接受同源、本机回环请求；写操作校验 `Origin` 与 `Content-Type`；
 - 地图分页按权重降序返回活跃星，带 `total / offset / limit / nextOffset / hasMore`；只返回页内边；
-- 地图元信息走 `/maps/:id/meta`；渲染走 `/maps/:id/viewport?cx&cy&w&h&pad`，只返回视口内活跃星与坐标；
+- 地图元信息走 `/maps/:id/meta`；渲染走 `/maps/:id/viewport?cx&cy&w&h&pad`，只返回视口内活跃星与坐标；视口记录精简，详情按需走 `/stars/:id`；
 - 导出 / 导入走单独的 zip 路由；
 - 变更后客户端主动刷新，暂不做 SSE。
 
@@ -929,7 +929,7 @@ POST  /plugins/rian-memory-star/api/maps
 - 文字标签是普通 DOM 文本，随视图层一起位移；
 - 星点固定 32px，四芒星 clip-path + radial-gradient 辉光；
 - Host 侧中心向外随机吸附布局：候选点按中心密、外圈疏分布，空间网格做约 40px 最小间距检测；高权重分配到外围点；无缩放，无边界拖拽平移；
-- 客户端按视口取星：首屏取中心区域，拖拽结束后按新视口补载并合并；只渲染已加载星；
+- 客户端按视口取星：首屏取中心区域，拖动中每 160ms 节流预取，松手只补最后区域并合并；只渲染已加载星；
 
 ---
 

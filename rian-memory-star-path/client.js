@@ -1148,6 +1148,10 @@ void main() {
         positions: new Map(),
       });
       const viewportSeqRef = React.useRef(0);
+      const viewportRequestRef = React.useRef({ inFlight: false, pending: null });
+      const viewportTimerRef = React.useRef(0);
+      const lastViewportRef = React.useRef(null);
+      const fetchViewportRef = React.useRef(null);
       const [viewportLoading, setViewportLoading] = React.useState(false);
       const [layoutVersion, setLayoutVersion] = React.useState(0);
       const immersive = settings?.uiMode !== 'edit';
@@ -1204,7 +1208,9 @@ void main() {
         for (const star of value.stars || []) {
           const point = positionById.get(star.id);
           if (!point) continue;
+          const previousStar = bucket.stars.get(star.id) || {};
           bucket.stars.set(star.id, {
+            ...previousStar,
             ...star,
             viewportX: point.x,
             viewportY: point.y,
@@ -1231,6 +1237,12 @@ void main() {
       const fetchViewport = React.useCallback(
         async (mapId, cx, cy, replace = false) => {
           if (!mapId) return;
+          const request = viewportRequestRef.current;
+          if (request.inFlight) {
+            request.pending = { mapId, cx, cy, replace };
+            return;
+          }
+          request.inFlight = true;
           activeMapRef.current = mapId;
           const sequence = viewportSeqRef.current + 1;
           viewportSeqRef.current = sequence;
@@ -1239,18 +1251,34 @@ void main() {
             const width = sizeRef.current.width;
             const height = sizeRef.current.height;
             const value = await api(
-              `/maps/${encodeURIComponent(mapId)}/viewport?cx=${cx.toFixed(1)}&cy=${cy.toFixed(1)}&w=${width}&h=${height}&pad=320`,
+              `/maps/${encodeURIComponent(mapId)}/viewport?cx=${cx.toFixed(1)}&cy=${cy.toFixed(1)}&w=${width}&h=${height}&pad=450`,
             );
             if (sequence !== viewportSeqRef.current || activeMapRef.current !== mapId) return;
             mergeViewport(mapId, value, replace);
           } catch (cause) {
             if (sequence === viewportSeqRef.current) setError(String(cause.message || cause));
           } finally {
+            request.inFlight = false;
             if (sequence === viewportSeqRef.current) setViewportLoading(false);
+            const pending = request.pending;
+            request.pending = null;
+            if (pending && pending.mapId === activeMapRef.current) {
+              window.setTimeout(
+                () =>
+                  fetchViewportRef.current?.(
+                    pending.mapId,
+                    pending.cx,
+                    pending.cy,
+                    pending.replace,
+                  ),
+                0,
+              );
+            }
           }
         },
         [mergeViewport],
       );
+      fetchViewportRef.current = fetchViewport;
 
       const loadMap = React.useCallback(
         async (mapId) => {
@@ -1271,6 +1299,7 @@ void main() {
             });
             setSelectedId(null);
             await fetchViewport(mapId, 0, 0, true);
+            lastViewportRef.current = { mapId, cx: 0, cy: 0 };
           } catch (cause) {
             setError(String(cause.message || cause));
           }
@@ -1281,12 +1310,14 @@ void main() {
       const refreshViewport = React.useCallback(() => {
         const mapId = activeMapRef.current;
         if (!mapId) return;
-        fetchViewport(
-          mapId,
-          -pan2dRef.current.x,
-          -pan2dRef.current.y,
-          false,
-        );
+        const cx = -pan2dRef.current.x;
+        const cy = -pan2dRef.current.y;
+        const last = lastViewportRef.current;
+        if (last && last.mapId === mapId && Math.hypot(cx - last.cx, cy - last.cy) < 120) {
+          return;
+        }
+        lastViewportRef.current = { mapId, cx, cy };
+        fetchViewport(mapId, cx, cy, false);
       }, [fetchViewport]);
 
       React.useEffect(() => {
@@ -1804,6 +1835,8 @@ void main() {
             y: pan2dRef.current.y + dy,
           };
           applyPanTransform();
+          if (viewportTimerRef.current) window.clearTimeout(viewportTimerRef.current);
+          viewportTimerRef.current = window.setTimeout(() => refreshViewport(), 160);
           return;
         }
         const renderer = glRef.current.renderer;
@@ -1828,11 +1861,11 @@ void main() {
         }
         if (moved <= 6 && pressedStar) {
           suppressBackgroundClickRef.current = true;
-          setSelectedId(pressedStar);
-          setNebulaOpen(false);
+          void selectStar(pressedStar);
         }
         if (settings?.viewMode === '2d' && moved > 24) {
-          window.setTimeout(() => refreshViewport(), 120);
+          if (viewportTimerRef.current) window.clearTimeout(viewportTimerRef.current);
+          window.setTimeout(() => refreshViewport(), 60);
         }
       }
 
@@ -1938,6 +1971,31 @@ void main() {
         setNebulaOpen(false);
       }
 
+      async function selectStar(starId) {
+        setSelectedId(starId);
+        setNebulaOpen(false);
+        try {
+          const value = await api(`/stars/${encodeURIComponent(starId)}`);
+          if (!value?.star) return;
+          const bucket = loadedRef.current;
+          const existing = bucket.stars.get(starId);
+          if (!existing) return;
+          bucket.stars.set(starId, {
+            ...existing,
+            ...value.star,
+            viewportX: existing.viewportX,
+            viewportY: existing.viewportY,
+          });
+          setData((previous) =>
+            previous
+              ? { ...previous, stars: [...bucket.stars.values()] }
+              : previous,
+          );
+        } catch {
+          // keep the compact star if detail fetch fails
+        }
+      }
+
       function openSearchResult(star) {
         setQuery('');
         setGlobalResults([]);
@@ -1947,7 +2005,7 @@ void main() {
           setPendingSelectId(star.id);
           setActiveId(star.mapId);
         } else {
-          setSelectedId(star.id);
+          void selectStar(star.id);
         }
       }
 
@@ -2572,8 +2630,7 @@ void main() {
                       dragRef.current.moved = 0;
                       return;
                     }
-                    setSelectedId(star.id);
-                    setNebulaOpen(false);
+                    void selectStar(star.id);
                   },
                   style: {
                     position: 'absolute',
