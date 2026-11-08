@@ -789,7 +789,7 @@ weight = clamp(
 - 每图一份混合倒排索引：CJK 按字二元组，拉丁按词切分；
 - 索引保存 `postings`、`df`、`avgdl`、字段长度等 BM25 统计，docs 以 starId 为键；
 - 写入后记录 dirty star id；下一次检索只增删这些星的 docs / postings / df，不重建全图；
-- 启动时先按 2500 星分片预热索引，再开放记忆 API；`prewarmOnBoot=false` 可关闭；打开大图也会触发预热点；
+- 启动时先按 2500 星分片预热索引；默认只预热公共图 + 已绑定项目图（`prewarmScope:"bound"`），其余地图首次检索冷建，`"all"` 恢复全量；`prewarmOnBoot=false` 可关闭；
 - 直接命中不足时，按关系边扩展邻居，扩展分数为主命中分数的 0.42 倍；
 - 检索只评分倒排候选，并用覆盖率门槛过滤长查询的部分命中；
 

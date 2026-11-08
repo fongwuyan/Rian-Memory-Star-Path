@@ -65,6 +65,8 @@ const DEFAULT_SETTINGS = {
   exportReminder: true,
   autoBackup: true,
   journalFsync: false,
+  prewarmOnBoot: true,
+  prewarmScope: 'bound',
 };
 
 const CREDENTIAL_RE =
@@ -276,9 +278,11 @@ export function apply(ctx) {
     .then(() => createAutoBackup())
     .then(async () => {
       if (settings.prewarmOnBoot === false) return;
+      const warmIds = new Set([index.publicMapId, ...bindings.values()]);
       for (const map of index.maps) {
         const data = maps.get(map.id);
         if (!data || data.stars.length < 2000) continue;
+        if (settings.prewarmScope !== 'all' && !warmIds.has(map.id)) continue;
         try {
           await prewarmIndex(map.id);
         } catch (error) {
