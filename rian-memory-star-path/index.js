@@ -232,6 +232,9 @@ export function apply(ctx) {
     indexRebuilds: 0,
     indexSyncs: 0,
     indexPrewarms: 0,
+    journalAppends: 0,
+    statsJournalAppends: 0,
+    journalCompactions: 0,
     searchCandidates: 0,
     graphExpansions: 0,
     lastSearchMs: 0,
@@ -245,6 +248,7 @@ export function apply(ctx) {
   const journalBytes = new Map();
   const pendingStarSaves = new Map();
   const pendingFullSaves = new Set();
+  const pendingStats = new Map();
   const indexCache = new Map();
   const prewarming = new Set();
   const dirtyIndex = new Set();
@@ -298,6 +302,12 @@ export function apply(ctx) {
         const position = data.stars.findIndex((item) => item.id === star.id);
         if (position >= 0) data.stars[position] = star;
         else data.stars.push(star);
+      } else if (record?.op === 'stats' && record.id) {
+        const star = data.stars.find((item) => item.id === record.id);
+        if (star) {
+          if (Number.isFinite(record.recallCount)) star.recallCount = record.recallCount;
+          if (record.lastRecalledAt) star.lastRecalledAt = record.lastRecalledAt;
+        }
       } else if (record?.op === 'delete' && record.id) {
         data.stars = data.stars.filter((star) => star.id !== record.id);
         data.edges = (data.edges || []).filter(
@@ -414,6 +424,7 @@ export function apply(ctx) {
       clearTimeout(statsTimer);
       statsTimers.delete(mapId);
     }
+    pendingStats.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
       if (!data) return undefined;
@@ -612,11 +623,6 @@ export function apply(ctx) {
   }
 
   function scheduleMapSave(mapId, starId) {
-    const statsTimer = statsTimers.get(mapId);
-    if (statsTimer) {
-      clearTimeout(statsTimer);
-      statsTimers.delete(mapId);
-    }
     if (starId) {
       let ids = pendingStarSaves.get(mapId);
       if (!ids) {
@@ -664,7 +670,9 @@ export function apply(ctx) {
       await fs.appendFile(journalPath(mapId), payload, 'utf8');
       const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
       journalBytes.set(mapId, nextBytes);
+      metrics.journalAppends += 1;
       if (nextBytes > 8 * 1024 * 1024) {
+        metrics.journalCompactions += 1;
         setTimeout(() => {
           persistMap(mapId).catch((error) =>
             console.error('[memory-star] compact journal failed', error),
@@ -674,14 +682,60 @@ export function apply(ctx) {
     });
   }
 
-  function scheduleStatsSave(mapId) {
-    if (!mapId || saveTimers.has(mapId) || statsTimers.has(mapId)) return;
+  function scheduleStatsSave(mapId, starId) {
+    if (!mapId || !starId) return;
+    let ids = pendingStats.get(mapId);
+    if (!ids) {
+      ids = new Set();
+      pendingStats.set(mapId, ids);
+    }
+    ids.add(starId);
+    if (statsTimers.has(mapId)) return;
     const timer = setTimeout(() => {
       statsTimers.delete(mapId);
-      persistMap(mapId).catch((error) => console.error('[memory-star] save stats failed', error));
+      const pending = pendingStats.get(mapId);
+      pendingStats.delete(mapId);
+      if (pending && pending.size) {
+        persistStatsDelta(mapId, pending).catch((error) =>
+          console.error('[memory-star] save stats failed', error),
+        );
+      }
     }, 30000);
     timer.unref?.();
     statsTimers.set(mapId, timer);
+  }
+
+  function persistStatsDelta(mapId, starIds) {
+    pageCache.delete(mapId);
+    return enqueueWrite(`map:${mapId}`, async () => {
+      const data = maps.get(mapId);
+      if (!data) return;
+      const byId =
+        starIds.size > 200 ? new Map(data.stars.map((star) => [star.id, star])) : null;
+      const lines = [];
+      for (const starId of starIds) {
+        const star = byId ? byId.get(starId) : data.stars.find((item) => item.id === starId);
+        if (!star) continue;
+        lines.push(
+          `${JSON.stringify({
+            op: 'stats',
+            id: starId,
+            recallCount: star.recallCount,
+            lastRecalledAt: star.lastRecalledAt,
+          })}\n`,
+        );
+      }
+      if (!lines.length) return;
+      const payload = lines.join('');
+      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
+      journalBytes.set(mapId, nextBytes);
+      metrics.statsJournalAppends += 1;
+      if (nextBytes > 8 * 1024 * 1024) {
+        metrics.journalCompactions += 1;
+        setTimeout(() => persistMap(mapId).catch(() => {}), 0);
+      }
+    });
   }
 
   function scheduleBindings() {
@@ -1326,7 +1380,6 @@ export function apply(ctx) {
     hits = hits.slice(0, topK);
     if (!hits.length) return { text: '', count: 0, starIds: [] };
     const lines = [];
-    const touched = new Set();
     const starIds = [];
     const budget = Math.max(100, Number(settings.tokenBudget ?? 600));
     let used = 0;
@@ -1340,10 +1393,9 @@ export function apply(ctx) {
       hit.star.recallCount = Number(hit.star.recallCount || 0) + 1;
       hit.star.lastRecalledAt = nowIso();
       hit.star.updatedAt = hit.star.updatedAt || nowIso();
-      touched.add(hit.star.mapId);
+      scheduleStatsSave(hit.star.mapId, hit.star.id);
     }
     noteRecalls(agent?.id, turn, starIds);
-    for (const id of touched) scheduleStatsSave(id);
     return {
       text: [
         '<long-term-memory>',
@@ -1396,7 +1448,6 @@ export function apply(ctx) {
     const seen = new Set();
     const lines = [];
     const starIds = [];
-    const touched = new Set();
     const budget = Math.max(100, Number(settings.tokenBudget ?? 600));
     let used = 0;
     for (const { star, map } of picked) {
@@ -1410,9 +1461,8 @@ export function apply(ctx) {
       used += cost;
       star.recallCount = Number(star.recallCount || 0) + 1;
       star.lastRecalledAt = nowIso();
-      touched.add(star.mapId);
+      scheduleStatsSave(star.mapId, star.id);
     }
-    for (const id of touched) scheduleStatsSave(id);
     noteRecalls(agent?.id, turn, starIds);
     return {
       text: [

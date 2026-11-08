@@ -790,7 +790,7 @@ weight = clamp(
 - 地图全量快照 + append-only journal；
 - 单星 upsert/delete 追加到 `*.journal.ndjson`，启动时回放；
 - journal 超过 8MB 或插件卸载时压缩回全量快照；
-- 召回统计延迟 30 秒批量保存，避免每 turn 重写整图；
+- 召回统计追加 `stats` 记录，30 秒批量保存，避免每 turn 重写整图；
 
 ### 10.3 并发
 
