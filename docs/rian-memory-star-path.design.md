@@ -785,7 +785,7 @@ weight = clamp(
 
 ### 10.1 加载与索引
 
-- 内存只保留公共图 + 当前绑定图，LRU 缓存 8 张；
+- 启动完成备份与预热后，非公共、非绑定的 3000+ 星地图降为元信息占位；首次 `/meta`、viewport、page、导出、搜索时自动加载；`lazyMaps:false` 可关闭；
 - 每图一份混合倒排索引：CJK 按字二元组，拉丁按词切分；
 - 索引保存 `postings`、`df`、`avgdl`、字段长度等 BM25 统计，docs 以 starId 为键；
 - 写入后记录 dirty star id；下一次检索只增删这些星的 docs / postings / df，不重建全图；

@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
   prewarmOnBoot: true,
   prewarmScope: 'bound',
   journalCheckpointMinutes: 15,
+  lazyMaps: true,
 };
 
 const CREDENTIAL_RE =
@@ -228,6 +229,8 @@ export function apply(ctx) {
 
   const index = { version: 1, publicMapId: '', maps: [] };
   const maps = new Map();
+  const unloadedLoads = new Map();
+  const LAZY_MIN_STARS = 3000;
   const pageCache = new Map();
   const bindings = new Map();
   const recallCache = new Map();
@@ -256,6 +259,8 @@ export function apply(ctx) {
     statsJournalAppends: 0,
     journalCompactions: 0,
     journalCheckpoints: 0,
+    mapsLoaded: 0,
+    mapsUnloaded: 0,
     layoutBuilds: 0,
     lastLayoutMs: 0,
     viewportRequests: 0,
@@ -304,6 +309,9 @@ export function apply(ctx) {
         }
       }
     })
+    .then(async () => {
+      await unloadUnusedMaps();
+    })
     .catch(async (error) => {
       bootError = error;
       await releaseProfileLock();
@@ -312,6 +320,88 @@ export function apply(ctx) {
 
   function mapPath(mapId) {
     return path.join(mapsDir, `${mapId}.json`);
+  }
+
+  function mapStatsOf(data) {
+    const stats = {
+      stars: 0,
+      active: 0,
+      pending: 0,
+      archived: 0,
+      rejected: 0,
+      disputed: 0,
+    };
+    for (const star of data?.stars || []) {
+      stats.stars += 1;
+      if (star.status === 'active') stats.active += 1;
+      if (star.status === 'pending') stats.pending += 1;
+      if (star.status === 'archived') stats.archived += 1;
+      if (star.status === 'rejected') stats.rejected += 1;
+      if (star.status === 'active' && star.disputed) stats.disputed += 1;
+    }
+    return stats;
+  }
+
+  async function ensureMapLoaded(mapId) {
+    const current = maps.get(mapId);
+    if (!current || !current.unloaded) return current;
+    if (unloadedLoads.has(mapId)) return unloadedLoads.get(mapId);
+    const loading = (async () => {
+      let loaded;
+      try {
+        loaded = JSON.parse(await fs.readFile(mapPath(mapId), 'utf8'));
+      } catch {
+        loaded = {
+          map: current.map,
+          stars: [],
+          edges: [],
+          constellations: [],
+        };
+      }
+      loaded.map = loaded.map || current.map;
+      loaded.stars = loaded.stars || [];
+      loaded.edges = loaded.edges || [];
+      loaded.constellations = loaded.constellations || [];
+      await replayMapJournal(mapId, loaded);
+      delete loaded.unloaded;
+      delete loaded.stats;
+      maps.set(mapId, loaded);
+      starLocator = null;
+      metrics.mapsLoaded += 1;
+      return loaded;
+    })().finally(() => unloadedLoads.delete(mapId));
+    unloadedLoads.set(mapId, loading);
+    return loading;
+  }
+
+  async function ensureAllMapsLoaded() {
+    await Promise.all([...maps.keys()].map((mapId) => ensureMapLoaded(mapId)));
+  }
+
+  async function unloadUnusedMaps() {
+    if (settings.lazyMaps === false) return;
+    const keep = new Set([index.publicMapId, ...bindings.values()]);
+    for (const map of index.maps) {
+      if (keep.has(map.id)) continue;
+      const data = maps.get(map.id);
+      if (!data || data.unloaded || data.stars.length < LAZY_MIN_STARS) continue;
+      const stats = mapStatsOf(data);
+      maps.set(map.id, {
+        map: data.map,
+        stars: [],
+        edges: [],
+        constellations: [],
+        unloaded: true,
+        stats,
+      });
+      layoutCache.delete(map.id);
+      pageCache.delete(map.id);
+      indexCache.delete(map.id);
+      dirtyIndex.delete(map.id);
+      dirtyStars.delete(map.id);
+      starLocator = null;
+      metrics.mapsUnloaded += 1;
+    }
   }
 
   function journalPath(mapId) {
@@ -485,7 +575,7 @@ export function apply(ctx) {
     pendingStats.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
-      if (!data) return undefined;
+      if (!data || data.unloaded) return undefined;
       await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
       await fs.unlink(journalPath(mapId)).catch(() => {});
       journalBytes.delete(mapId);
@@ -1059,7 +1149,11 @@ export function apply(ctx) {
     if (!agent?.id) return null;
     if (bindings.has(agent.id)) {
       const stored = bindings.get(agent.id);
-      return stored && stored !== index.publicMapId ? stored : null;
+      if (stored && stored !== index.publicMapId) {
+        await ensureMapLoaded(stored);
+        return stored;
+      }
+      return null;
     }
     let mapId = null;
     try {
@@ -1073,6 +1167,7 @@ export function apply(ctx) {
           );
           if (existing) {
             mapId = existing.id;
+            await ensureMapLoaded(mapId);
           } else {
             const projectMap = makeMap(
               workspace.title || workspace.name || path.basename(cwd) || '项目',
@@ -2096,6 +2191,13 @@ export function apply(ctx) {
     return starLocator.get(id) || null;
   }
 
+  async function findStarAcrossLoaded(id) {
+    const found = findStarAcross(id);
+    if (found) return found;
+    await ensureAllMapsLoaded();
+    return findStarAcross(id);
+  }
+
   function similarStars(mapId, title, fact) {
     const data = maps.get(mapId);
     if (!data) return [];
@@ -2322,6 +2424,7 @@ export function apply(ctx) {
     if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
     const wantsPublic = input.target === 'public';
     const mapId = wantsPublic ? index.publicMapId : (await ensureBinding(agent)) || index.publicMapId;
+    await ensureMapLoaded(mapId);
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
       throw new Error('Memory is disabled for this workspace.');
     }
@@ -2380,6 +2483,8 @@ export function apply(ctx) {
     checkpointTimer = setInterval(() => {
       for (const [mapId, bytes] of journalBytes) {
         if (bytes < 2 * 1024 * 1024) continue;
+        const data = maps.get(mapId);
+        if (!data || data.unloaded) continue;
         metrics.journalCheckpoints += 1;
         persistMap(mapId).catch((error) =>
           console.error('[memory-star] journal checkpoint failed', error),
@@ -2525,8 +2630,8 @@ export function apply(ctx) {
       },
       async execute(args) {
         await ready;
-        const from = findStarAcross(String(args?.from ?? ''));
-        const to = findStarAcross(String(args?.to ?? ''));
+        const from = await findStarAcrossLoaded(String(args?.from ?? ''));
+        const to = await findStarAcrossLoaded(String(args?.to ?? ''));
         if (!from || !to) throw new Error('memory not found');
         const relation = String(args?.relation ?? 'related');
         const exists = from.data.edges.some(
@@ -2581,7 +2686,7 @@ export function apply(ctx) {
       },
       async execute(args) {
         await ready;
-        const found = findStarAcross(String(args?.id ?? ''));
+        const found = await findStarAcrossLoaded(String(args?.id ?? ''));
         if (!found) throw new Error('memory not found');
         const beforeStatus = found.star.status;
         found.star.status = 'archived';
@@ -2633,7 +2738,7 @@ export function apply(ctx) {
         if (settings.privacyIncognito) throw new Error('Memory is paused by privacy settings.');
         const agent = currentAgent(exec);
         if (isSessionMuted(agent)) throw new Error('Memory is disabled for this session.');
-        const found = findStarAcross(String(args?.id ?? ''));
+        const found = await findStarAcrossLoaded(String(args?.id ?? ''));
         if (!found) throw new Error('memory not found');
         if (isWorkspaceMuted(found.data.map.workspaceId)) {
           throw new Error('Memory is disabled for this workspace.');
@@ -2746,12 +2851,12 @@ export function apply(ctx) {
 
   function mapSummary(map) {
     const data = maps.get(map.id);
-    const stars = data?.stars || [];
+    const stats = data?.unloaded ? data.stats : mapStatsOf(data);
     return {
       ...map,
-      starCount: stars.filter((star) => star.status === 'active').length,
-      pendingCount: stars.filter((star) => star.status === 'pending').length,
-      archivedCount: stars.filter((star) => star.status === 'archived').length,
+      starCount: stats?.active || 0,
+      pendingCount: stats?.pending || 0,
+      archivedCount: stats?.archived || 0,
     };
   }
 
@@ -2782,7 +2887,7 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'meta') {
-            const data = maps.get(parts[1]);
+            const data = await ensureMapLoaded(parts[1]);
             if (!data) {
               sendJson(res, 404, { error: 'map not found' });
               return;
@@ -2799,7 +2904,7 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'viewport') {
-            const data = maps.get(parts[1]);
+            const data = await ensureMapLoaded(parts[1]);
             if (!data) {
               sendJson(res, 404, { error: 'map not found' });
               return;
@@ -2821,7 +2926,7 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'page') {
-            const data = maps.get(parts[1]);
+            const data = await ensureMapLoaded(parts[1]);
             if (!data) {
               sendJson(res, 404, { error: 'map not found' });
               return;
@@ -2859,7 +2964,7 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'maps' && parts[1]) {
-            const data = maps.get(parts[1]);
+            const data = await ensureMapLoaded(parts[1]);
             if (!data) {
               sendJson(res, 404, { error: 'map not found' });
               return;
@@ -2888,6 +2993,7 @@ export function apply(ctx) {
           if (method === 'POST' && parts[0] === 'stars' && !parts[1]) {
             const body = await readBody(req);
             const mapId = body.mapId && maps.has(body.mapId) ? body.mapId : index.publicMapId;
+            await ensureMapLoaded(mapId);
             if (settings.privacyIncognito) {
               sendJson(res, 403, { error: 'Memory is paused by privacy settings.' });
               return;
@@ -2927,7 +3033,7 @@ export function apply(ctx) {
 
           if (method === 'POST' && parts[0] === 'stars' && parts[1] && parts[2] === 'feedback') {
             const body = await readBody(req);
-            const found = findStarAcross(parts[1]);
+            const found = await findStarAcrossLoaded(parts[1]);
             if (!found) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -2947,7 +3053,7 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'stars' && parts[1]) {
-            const found = findStarAcross(parts[1]);
+            const found = await findStarAcrossLoaded(parts[1]);
             if (!found) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -2958,7 +3064,7 @@ export function apply(ctx) {
 
           if (method === 'PATCH' && parts[0] === 'stars' && parts[1]) {
             const body = await readBody(req);
-            const found = findStarAcross(parts[1]);
+            const found = await findStarAcrossLoaded(parts[1]);
             if (!found) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -2981,7 +3087,7 @@ export function apply(ctx) {
 
           if (method === 'POST' && parts[0] === 'stars' && parts[1] && parts[2] === 'restore') {
             const body = await readBody(req);
-            const found = findStarAcross(parts[1]);
+            const found = await findStarAcrossLoaded(parts[1]);
             if (!found) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -3045,7 +3151,7 @@ export function apply(ctx) {
 
           if (method === 'DELETE' && parts[0] === 'stars' && parts[1]) {
             const id = parts[1];
-            const found = findStarAcross(id);
+            const found = await findStarAcrossLoaded(id);
             if (!found) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -3177,8 +3283,8 @@ export function apply(ctx) {
             const toId = String(body.to || '');
             const allowed = ['related', 'supports', 'contradicts', 'derived', 'part-of', 'supersedes'];
             const relation = allowed.includes(body.relation) ? body.relation : 'related';
-            const from = findStarAcross(fromId);
-            const to = findStarAcross(toId);
+            const from = await findStarAcrossLoaded(fromId);
+            const to = await findStarAcrossLoaded(toId);
             if (!from || !to) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -3214,8 +3320,8 @@ export function apply(ctx) {
             const keepId = String(body.keepId || '');
             const dropId = String(body.dropId || '');
             const mode = String(body.mode || 'keep-both');
-            const keep = findStarAcross(keepId);
-            const drop = findStarAcross(dropId);
+            const keep = await findStarAcrossLoaded(keepId);
+            const drop = await findStarAcrossLoaded(dropId);
             if (!keep || !drop) {
               sendJson(res, 404, { error: 'memory not found' });
               return;
@@ -3349,6 +3455,7 @@ export function apply(ctx) {
             const query = url.searchParams.get('q') || '';
             const limit = Number(url.searchParams.get('limit')) || 20;
             const graph = url.searchParams.get('graph') === '1';
+            await ensureAllMapsLoaded();
             const hits = searchAcrossMaps([...maps.keys()], query, limit, { graph });
             sendJson(res, 200, {
               query,
@@ -3359,6 +3466,8 @@ export function apply(ctx) {
 
           if (method === 'GET' && parts[0] === 'export') {
             const mapId = url.searchParams.get('mapId') || '';
+            if (mapId) await ensureMapLoaded(mapId);
+            else await ensureAllMapsLoaded();
             const selected = mapId
               ? [maps.get(mapId)].filter(Boolean)
               : [...maps.values()];
@@ -3442,6 +3551,7 @@ export function apply(ctx) {
             }
             const strategy = url.searchParams.get('strategy') === 'merge' ? 'merge' : 'copy';
             const sanitize = url.searchParams.get('privacy') !== 'allow';
+            await ensureAllMapsLoaded();
             const imported = await importMapEntries(body.maps, strategy, { sanitize });
             sendJson(res, 200, { imported });
             return;
@@ -3476,6 +3586,7 @@ export function apply(ctx) {
             }
             const strategy = url.searchParams.get('strategy') === 'merge' ? 'merge' : 'copy';
             const sanitize = url.searchParams.get('privacy') !== 'allow';
+            await ensureAllMapsLoaded();
             const imported = await importMapEntries(entries, strategy, { sanitize });
             sendJson(res, 200, { imported });
             return;
@@ -3514,7 +3625,12 @@ export function apply(ctx) {
           }
 
           if (method === 'GET' && parts[0] === 'health') {
-            const all = [...maps.values()].flatMap((data) => data.stars);
+            const mapStats = index.maps.map((map) => {
+              const data = maps.get(map.id);
+              return data?.unloaded ? data.stats : mapStatsOf(data);
+            });
+            const sumStat = (field) =>
+              mapStats.reduce((sum, stats) => sum + Number(stats?.[field] || 0), 0);
             const journalBytesTotal = [...journalBytes.values()].reduce(
               (sum, value) => sum + value,
               0,
@@ -3527,16 +3643,17 @@ export function apply(ctx) {
                 // map may not have been persisted yet
               }
             }
-            const mapsDetail = index.maps.map((map) => {
-              const stars = maps.get(map.id)?.stars || [];
+            const mapsDetail = index.maps.map((map, position) => {
+              const stats = mapStats[position];
               return {
                 id: map.id,
                 name: map.name,
                 kind: map.kind,
-                stars: stars.length,
-                active: stars.filter((star) => star.status === 'active').length,
-                pending: stars.filter((star) => star.status === 'pending').length,
-                disputed: stars.filter((star) => star.status === 'active' && star.disputed).length,
+                stars: stats?.stars || 0,
+                active: stats?.active || 0,
+                pending: stats?.pending || 0,
+                disputed: stats?.disputed || 0,
+                unloaded: Boolean(maps.get(map.id)?.unloaded),
               };
             });
             let backups = 0;
@@ -3549,12 +3666,12 @@ export function apply(ctx) {
             }
             sendJson(res, 200, {
               maps: index.maps.length,
-              stars: all.length,
-              pending: all.filter((star) => star.status === 'pending').length,
-              active: all.filter((star) => star.status === 'active').length,
-              archived: all.filter((star) => star.status === 'archived').length,
-              rejected: all.filter((star) => star.status === 'rejected').length,
-              disputed: all.filter((star) => star.status === 'active' && star.disputed).length,
+              stars: sumStat('stars'),
+              pending: sumStat('pending'),
+              active: sumStat('active'),
+              archived: sumStat('archived'),
+              rejected: sumStat('rejected'),
+              disputed: sumStat('disputed'),
               mapsDetail,
               metrics: { ...metrics },
               storage: {
@@ -3564,6 +3681,7 @@ export function apply(ctx) {
                 indexMaps: indexCache.size,
                 layoutMaps: layoutCache.size,
                 pages: pageCache.size,
+                unloadedMaps: [...maps.values()].filter((data) => data.unloaded).length,
                 rssMB: Number((process.memoryUsage().rss / 1048576).toFixed(1)),
                 lockOwned,
               },
@@ -3572,6 +3690,7 @@ export function apply(ctx) {
                 prewarmOnBoot: settings.prewarmOnBoot !== false,
                 journalFsync: Boolean(settings.journalFsync),
                 journalCheckpointMinutes: Number(settings.journalCheckpointMinutes ?? 15),
+                lazyMaps: settings.lazyMaps !== false,
                 privacyOutputRedaction: settings.privacyOutputRedaction !== false,
               },
               backups,
