@@ -3011,7 +3011,24 @@ export function apply(ctx) {
             if (bindingsChanged) await persistBindings();
             await fs.unlink(mapPath(id)).catch(() => {});
             await fs.unlink(journalPath(id)).catch(() => {});
+            journalBytes.delete(id);
+            indexCache.delete(id);
+            dirtyIndex.delete(id);
+            dirtyStars.delete(id);
+            pageCache.delete(id);
             layoutCache.delete(id);
+            const deleteTimer = saveTimers.get(id);
+            if (deleteTimer) {
+              clearTimeout(deleteTimer);
+              saveTimers.delete(id);
+            }
+            pendingStarSaves.delete(id);
+            pendingStats.delete(id);
+            const statsTimer = statsTimers.get(id);
+            if (statsTimer) {
+              clearTimeout(statsTimer);
+              statsTimers.delete(id);
+            }
             starLocator = null;
             sendJson(res, 200, { deleted: true });
             return;
@@ -3419,6 +3436,10 @@ export function apply(ctx) {
 
           if (method === 'GET' && parts[0] === 'health') {
             const all = [...maps.values()].flatMap((data) => data.stars);
+            const journalBytesTotal = [...journalBytes.values()].reduce(
+              (sum, value) => sum + value,
+              0,
+            );
             const mapsDetail = index.maps.map((map) => {
               const stars = maps.get(map.id)?.stars || [];
               return {
@@ -3449,6 +3470,21 @@ export function apply(ctx) {
               disputed: all.filter((star) => star.status === 'active' && star.disputed).length,
               mapsDetail,
               metrics: { ...metrics },
+              storage: {
+                journalBytes: journalBytesTotal,
+                journalMaps: journalBytes.size,
+                indexMaps: indexCache.size,
+                layoutMaps: layoutCache.size,
+                pages: pageCache.size,
+                rssMB: Number((process.memoryUsage().rss / 1048576).toFixed(1)),
+                lockOwned,
+              },
+              settings: {
+                prewarmScope: settings.prewarmScope,
+                prewarmOnBoot: settings.prewarmOnBoot !== false,
+                journalFsync: Boolean(settings.journalFsync),
+                privacyOutputRedaction: settings.privacyOutputRedaction !== false,
+              },
               backups,
               version: PLUGIN_VERSION,
               schemaVersion: 1,
