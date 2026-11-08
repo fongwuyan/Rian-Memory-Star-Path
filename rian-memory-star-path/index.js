@@ -929,12 +929,12 @@ export function apply(ctx) {
     const started = Date.now();
     const stars = data.stars.filter((star) => star.status === 'active' && !star.disputed);
     const count = stars.length;
-    const spacing = 40;
+    const spacing = 72;
     const points = [];
     if (count) {
       const area = Math.max((count * spacing * spacing) / 0.22, 640 * 480 * 1.44);
       const radius = Math.sqrt(area / Math.PI);
-      const random = mulberry32(hashSeed(`${mapId}:${count}:radial-v1`));
+      const random = mulberry32(hashSeed(`${mapId}:${count}:radial-v2`));
       const cell = spacing / Math.SQRT2;
       const buckets = new Map();
       const fits = (x, y) => {

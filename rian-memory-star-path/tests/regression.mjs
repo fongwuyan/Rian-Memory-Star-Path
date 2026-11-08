@@ -183,7 +183,7 @@ async function main() {
   assert.ok(cluster, 'expected 回归 constellation');
   assert.ok(cluster.starIds.length >= 3, 'expected at least three stars');
 
-  const search = await request(`/search?q=${encodeURIComponent('回归')}&limit=50`);
+  const search = await request(`/search?q=${encodeURIComponent(stamp)}&limit=50`);
   assert.ok(
     (search.stars || []).some((star) => star.mapId === map.id),
     'expected global search to include temporary map',
