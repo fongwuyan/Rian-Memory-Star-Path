@@ -1154,6 +1154,7 @@ void main() {
       const viewportFlushTimerRef = React.useRef(0);
       const viewportInfoRef = React.useRef(null);
       const viewportDirtyRef = React.useRef(false);
+      const lastViewportCenterRef = React.useRef(null);
       const fetchViewportRef = React.useRef(null);
       const [viewportLoading, setViewportLoading] = React.useState(false);
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1238,24 +1239,54 @@ void main() {
         };
       }, []);
 
+      const collectRenderedViewport = React.useCallback(() => {
+        const bucket = loadedRef.current;
+        const width = sizeRef.current.width;
+        const height = sizeRef.current.height;
+        const cx = -pan2dRef.current.x;
+        const cy = -pan2dRef.current.y;
+        const margin = 180;
+        const halfWidth = width / 2 + margin;
+        const halfHeight = height / 2 + margin;
+        const stars = [];
+        const ids = new Set();
+        for (const star of bucket.stars.values()) {
+          const dx = Math.abs(star.viewportX - cx);
+          const dy = Math.abs(star.viewportY - cy);
+          if (dx > halfWidth || dy > halfHeight) continue;
+          stars.push(star);
+          ids.add(star.id);
+        }
+        const edges = [];
+        for (const edge of bucket.edges.values()) {
+          if (ids.has(edge.from) && ids.has(edge.to)) edges.push(edge);
+        }
+        return { stars, edges, cx, cy };
+      }, []);
+
       const flushViewport = React.useCallback(() => {
         const info = viewportInfoRef.current;
         if (!info || info.mapId !== activeMapRef.current) return;
-        if (!viewportDirtyRef.current) return;
+        const rendered = collectRenderedViewport();
+        const last = lastViewportCenterRef.current;
+        const moved =
+          !last ||
+          Math.hypot(rendered.cx - last.cx, rendered.cy - last.cy) >= 24;
+        if (!viewportDirtyRef.current && !moved) return;
         viewportDirtyRef.current = false;
-        const bucket = loadedRef.current;
+        lastViewportCenterRef.current = { cx: rendered.cx, cy: rendered.cy };
         setData((previous) => ({
           ...(previous || {}),
           map: info.map || previous?.map,
           publicMapId: info.publicMapId || previous?.publicMapId,
-          stars: [...bucket.stars.values()],
-          edges: [...bucket.edges.values()],
+          stars: rendered.stars,
+          edges: rendered.edges,
           total: info.total ?? previous?.total ?? 0,
           viewport: true,
           constellations: previous?.constellations || [],
           inactive: previous?.inactive || [],
         }));
-      }, []);
+      }, [collectRenderedViewport]);
 
       const fetchViewport = React.useCallback(
         async (mapId, cx, cy, replace = false) => {
@@ -1326,6 +1357,7 @@ void main() {
           }
           viewportInfoRef.current = null;
           viewportDirtyRef.current = false;
+          lastViewportCenterRef.current = null;
           loadedRef.current.stars.clear();
           loadedRef.current.edges.clear();
           loadedRef.current.positions.clear();
@@ -2059,9 +2091,10 @@ void main() {
             viewportX: existing.viewportX,
             viewportY: existing.viewportY,
           });
+          const rendered = collectRenderedViewport();
           setData((previous) =>
             previous
-              ? { ...previous, stars: [...bucket.stars.values()] }
+              ? { ...previous, stars: rendered.stars, edges: rendered.edges }
               : previous,
           );
         } catch {
