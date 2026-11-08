@@ -280,6 +280,7 @@ pending ──点亮──▶ active ──归档──▶ archived
 | `memory_save` | 保存一条记忆 |
 | `memory_link` | 建立两颗星之间的关系 |
 | `memory_forget` | 归档一条错误 / 过时的记忆 |
+| `memory_feedback` | 标记 used / ignored / wrong，影响排序 |
 
 ### 5.2 memory_search
 
@@ -522,11 +523,15 @@ conversation, follow the current conversation and mention the conflict.
 weight = clamp(
   importance × (0.35 + 0.65 × 0.5^(ageDays / halfLife))
   + min(0.15, recallCount × 0.01)
+  + min(0.18, usedCount × 0.03)
+  - min(0.08, ignoredCount × 0.02)
+  - min(0.35, wrongCount × 0.12)
   + (pinned ? 0.25 : 0),
   0, 1
 )
 ```
 
+- `used / ignored / wrong` 来自 `memory_feedback`，反馈写入 history 但不删除记忆；
 - `ageDays` 取最近更新 / 最近召回中较近者；
 - `halfLife` 默认 45 天；
 - 权重决定亮度、列表排序、检索排序。

@@ -7,6 +7,7 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 新增 `memory_feedback`：used / ignored / wrong 反馈进入权重与 history，不删除记忆；API `/stars/:id/feedback` 同步开放。
 - 模型出口统一脱敏：`memory_search`、自动召回、brief、UI 搜索结果中的凭据/手机号/邮箱/自定义敏感词替换为 `[redacted]`；可用 `privacyOutputRedaction:false` 关闭。
 - 召回统一走 `retrieveHits`：先用原始候选扩图，再做重复抑制；pinned 保留最低召回位，brief 不再压掉 pinned。
 - 图扩展改为邻接表，支持 5000 条以上关系边的大图。

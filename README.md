@@ -155,6 +155,7 @@ rian-memory-star-path/
   tests/graph.mjs       图关系召回专项
   tests/import-privacy.mjs  导入隐私过滤专项
   tests/ingress.mjs     手动/模型统一写入专项
+  tests/feedback.mjs    记忆反馈专项
   tests/generate-realistic-map.mjs  生成真实场景测试星图
 ```
 
@@ -169,6 +170,7 @@ $env:DSH_MEMORY_DATA_DIR="$env:USERPROFILE\.dsh\profiles\desktop\plugin-data\ria
 node tests/journal.mjs
 node tests/import-privacy.mjs
 node tests/ingress.mjs
+node tests/feedback.mjs
 ```
 
 重建真实场景测试图（会删除旧的 `测试星图 10w`）：

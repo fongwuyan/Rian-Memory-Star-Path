@@ -247,6 +247,9 @@ export function apply(ctx) {
     viewportRequests: 0,
     searchCandidates: 0,
     graphExpansions: 0,
+    usedFeedback: 0,
+    ignoredFeedback: 0,
+    wrongFeedback: 0,
     lastSearchMs: 0,
     lastIndexMs: 0,
     lastSearchAt: null,
@@ -1079,7 +1082,19 @@ export function apply(ctx) {
     const recency = Math.pow(0.5, ageDays / Math.max(1, HALF_LIFE_DAYS));
     const base = Number(star.importance ?? TYPE_IMPORTANCE[star.type] ?? 0.5);
     const recall = Math.min(0.15, Number(star.recallCount || 0) * 0.01);
-    return clamp(base * (0.35 + 0.65 * recency) + recall + (star.pinned ? 0.25 : 0), 0, 1);
+    const used = Math.min(0.18, Number(star.usedCount || 0) * 0.03);
+    const ignored = Math.min(0.08, Number(star.ignoredCount || 0) * 0.02);
+    const wrong = Math.min(0.35, Number(star.wrongCount || 0) * 0.12);
+    return clamp(
+      base * (0.35 + 0.65 * recency) +
+        recall +
+        used -
+        ignored -
+        wrong +
+        (star.pinned ? 0.25 : 0),
+      0,
+      1,
+    );
   }
 
   function hashSeed(text) {
@@ -2241,6 +2256,36 @@ export function apply(ctx) {
     };
   }
 
+  function applyMemoryFeedback(star, signal, actor = 'user') {
+    const field =
+      signal === 'used'
+        ? 'usedCount'
+        : signal === 'ignored'
+          ? 'ignoredCount'
+          : signal === 'wrong'
+            ? 'wrongCount'
+            : null;
+    if (!field) throw new Error('signal must be used, ignored, or wrong');
+    const before = Number(star[field] || 0);
+    star[field] = before + 1;
+    star.lastFeedbackAt = nowIso();
+    star.updatedAt = nowIso();
+    star.version = Number(star.version || 1) + 1;
+    recordStarHistory(star, actor, [{ field, from: before, to: star[field] }]);
+    if (signal === 'used') metrics.usedFeedback += 1;
+    if (signal === 'ignored') metrics.ignoredFeedback += 1;
+    if (signal === 'wrong') metrics.wrongFeedback += 1;
+    scheduleMapSave(star.mapId, star.id);
+    return {
+      ok: true,
+      id: star.id,
+      signal,
+      usedCount: Number(star.usedCount || 0),
+      ignoredCount: Number(star.ignoredCount || 0),
+      wrongCount: Number(star.wrongCount || 0),
+    };
+  }
+
   function registerTools() {
     ctx.tools.register({
       name: 'memory_search',
@@ -2445,6 +2490,52 @@ export function apply(ctx) {
         invalidateIndex(found.star.mapId, found.star.id);
         scheduleMapSave(found.star.mapId, found.star.id);
         return { archived: true };
+      },
+    });
+
+    ctx.tools.register({
+      name: 'memory_feedback',
+      description:
+        'Record whether a memory was useful, ignored, or wrong. Adjusts future ranking without deleting the memory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          signal: { type: 'string', enum: ['used', 'ignored', 'wrong'] },
+        },
+        required: ['id', 'signal'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            usedCount: { type: 'number' },
+            ignoredCount: { type: 'number' },
+            wrongCount: { type: 'number' },
+          },
+          required: ['ok'],
+          additionalProperties: true,
+        },
+        render(_args, value) {
+          return [{ type: 'text', text: JSON.stringify(value) }];
+        },
+      },
+      presentCall(args) {
+        return { card: 'generic', title: `记忆反馈 · ${String(args?.signal ?? '')}` };
+      },
+      async execute(args, exec) {
+        await ready;
+        if (settings.privacyIncognito) throw new Error('Memory is paused by privacy settings.');
+        const agent = currentAgent(exec);
+        if (isSessionMuted(agent)) throw new Error('Memory is disabled for this session.');
+        const found = findStarAcross(String(args?.id ?? ''));
+        if (!found) throw new Error('memory not found');
+        if (isWorkspaceMuted(found.data.map.workspaceId)) {
+          throw new Error('Memory is disabled for this workspace.');
+        }
+        return applyMemoryFeedback(found.star, String(args?.signal ?? ''), 'model');
       },
     });
   }
@@ -2721,6 +2812,27 @@ export function apply(ctx) {
               status: result.status,
               merged: Boolean(result.merged),
             });
+            return;
+          }
+
+          if (method === 'POST' && parts[0] === 'stars' && parts[1] && parts[2] === 'feedback') {
+            const body = await readBody(req);
+            const found = findStarAcross(parts[1]);
+            if (!found) {
+              sendJson(res, 404, { error: 'memory not found' });
+              return;
+            }
+            try {
+              const feedback = applyMemoryFeedback(
+                found.star,
+                String(body.signal || ''),
+                'user',
+              );
+              await persistStarDelta(found.star.mapId, new Set([found.star.id]));
+              sendJson(res, 200, feedback);
+            } catch (error) {
+              sendJson(res, 400, { error: String(error?.message || error) });
+            }
             return;
           }
 
