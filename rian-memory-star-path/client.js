@@ -1853,9 +1853,10 @@ void main() {
         const pressedStar = pressedStarRef.current;
         pressedStarRef.current = null;
         glRef.current.renderer?.endDrag?.();
-        event.currentTarget.style.cursor = 'grab';
+        const layer = starLayerRef.current;
+        if (layer) layer.style.cursor = 'grab';
         try {
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
+          layer?.releasePointerCapture?.(event.pointerId);
         } catch {
           // pointer capture may already be released
         }
@@ -1873,6 +1874,19 @@ void main() {
         hoveredIdRef.current = null;
         setHovered(null);
       }
+
+      React.useEffect(() => {
+        const onMove = (event) => handlePointerMove(event);
+        const onUp = (event) => handlePointerUp(event);
+        window.addEventListener('pointermove', onMove, { passive: false });
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+        return () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+        };
+      }, []);
 
       function handleDoubleClick(event) {
         if (settings?.viewMode === '2d') return;
@@ -2565,11 +2579,9 @@ void main() {
               onClick: onCanvasClick,
               onKeyDown: handleKeyDown,
               onPointerDown: handlePointerDown,
-              onPointerMove: handlePointerMove,
-              onPointerUp: handlePointerUp,
-              onPointerCancel: handlePointerUp,
               onPointerLeave: handlePointerLeave,
               onDoubleClick: handleDoubleClick,
+              onDragStart: (event) => event.preventDefault(),
               style: {
                 position: 'absolute',
                 inset: 0,
@@ -2577,6 +2589,9 @@ void main() {
                 cursor: 'grab',
                 transform: 'translate3d(0, 0, 0)',
                 outline: 'none',
+                touchAction: 'none',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
                 willChange: 'transform',
               },
             },
@@ -2623,6 +2638,7 @@ void main() {
                   key: star.id,
                   type: 'button',
                   title: star.title,
+                  draggable: false,
                   'data-star-id': star.id,
                   onClick: (event) => {
                     event.stopPropagation();
