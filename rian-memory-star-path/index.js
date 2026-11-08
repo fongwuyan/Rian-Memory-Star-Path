@@ -241,6 +241,10 @@ export function apply(ctx) {
     lastRecallAt: null,
   };
   const saveTimers = new Map();
+  const statsTimers = new Map();
+  const journalBytes = new Map();
+  const pendingStarSaves = new Map();
+  const pendingFullSaves = new Set();
   const indexCache = new Map();
   const prewarming = new Set();
   const dirtyIndex = new Set();
@@ -267,6 +271,45 @@ export function apply(ctx) {
 
   function mapPath(mapId) {
     return path.join(mapsDir, `${mapId}.json`);
+  }
+
+  function journalPath(mapId) {
+    return `${mapPath(mapId)}.journal.ndjson`;
+  }
+
+  async function replayMapJournal(mapId, data) {
+    let raw = '';
+    try {
+      raw = await fs.readFile(journalPath(mapId), 'utf8');
+    } catch {
+      return;
+    }
+    journalBytes.set(mapId, Buffer.byteLength(raw));
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (record?.op === 'upsert' && record.star?.id) {
+        const star = { ...record.star, mapId };
+        const position = data.stars.findIndex((item) => item.id === star.id);
+        if (position >= 0) data.stars[position] = star;
+        else data.stars.push(star);
+      } else if (record?.op === 'delete' && record.id) {
+        data.stars = data.stars.filter((star) => star.id !== record.id);
+        data.edges = (data.edges || []).filter(
+          (edge) => edge.from !== record.id && edge.to !== record.id,
+        );
+        for (const constellation of data.constellations || []) {
+          constellation.starIds = (constellation.starIds || []).filter(
+            (starId) => starId !== record.id,
+          );
+        }
+      }
+    }
   }
 
   async function createAutoBackup() {
@@ -366,10 +409,18 @@ export function apply(ctx) {
 
   function persistMap(mapId) {
     pageCache.delete(mapId);
-    return enqueueWrite(`map:${mapId}`, () => {
+    const statsTimer = statsTimers.get(mapId);
+    if (statsTimer) {
+      clearTimeout(statsTimer);
+      statsTimers.delete(mapId);
+    }
+    return enqueueWrite(`map:${mapId}`, async () => {
       const data = maps.get(mapId);
       if (!data) return undefined;
-      return writeJsonAtomic(mapPath(mapId), data);
+      await writeJsonAtomic(mapPath(mapId), data);
+      await fs.unlink(journalPath(mapId)).catch(() => {});
+      journalBytes.delete(mapId);
+      return undefined;
     });
   }
 
@@ -560,16 +611,77 @@ export function apply(ctx) {
     };
   }
 
-  function scheduleMapSave(mapId) {
+  function scheduleMapSave(mapId, starId) {
+    const statsTimer = statsTimers.get(mapId);
+    if (statsTimer) {
+      clearTimeout(statsTimer);
+      statsTimers.delete(mapId);
+    }
+    if (starId) {
+      let ids = pendingStarSaves.get(mapId);
+      if (!ids) {
+        ids = new Set();
+        pendingStarSaves.set(mapId, ids);
+      }
+      ids.add(starId);
+    } else {
+      pendingFullSaves.add(mapId);
+      pendingStarSaves.delete(mapId);
+    }
     const current = saveTimers.get(mapId);
     if (current) clearTimeout(current);
     saveTimers.set(
       mapId,
       setTimeout(() => {
         saveTimers.delete(mapId);
-        persistMap(mapId).catch((error) => console.error('[memory-star] save map failed', error));
+        const ids = pendingStarSaves.get(mapId);
+        const full = pendingFullSaves.delete(mapId);
+        pendingStarSaves.delete(mapId);
+        const write =
+          !full && ids && ids.size ? persistStarDelta(mapId, ids) : persistMap(mapId);
+        write.catch((error) => console.error('[memory-star] save map failed', error));
       }, 300),
     );
+  }
+
+  function persistStarDelta(mapId, starIds) {
+    pageCache.delete(mapId);
+    return enqueueWrite(`map:${mapId}`, async () => {
+      const data = maps.get(mapId);
+      if (!data) return;
+      const byId =
+        starIds.size > 200
+          ? new Map(data.stars.map((star) => [star.id, star]))
+          : null;
+      const lines = [];
+      for (const starId of starIds) {
+        const star = byId ? byId.get(starId) : data.stars.find((item) => item.id === starId);
+        lines.push(
+          `${JSON.stringify(star ? { op: 'upsert', star } : { op: 'delete', id: starId })}\n`,
+        );
+      }
+      const payload = lines.join('');
+      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
+      journalBytes.set(mapId, nextBytes);
+      if (nextBytes > 8 * 1024 * 1024) {
+        setTimeout(() => {
+          persistMap(mapId).catch((error) =>
+            console.error('[memory-star] compact journal failed', error),
+          );
+        }, 0);
+      }
+    });
+  }
+
+  function scheduleStatsSave(mapId) {
+    if (!mapId || saveTimers.has(mapId) || statsTimers.has(mapId)) return;
+    const timer = setTimeout(() => {
+      statsTimers.delete(mapId);
+      persistMap(mapId).catch((error) => console.error('[memory-star] save stats failed', error));
+    }, 30000);
+    timer.unref?.();
+    statsTimers.set(mapId, timer);
   }
 
   function scheduleBindings() {
@@ -638,6 +750,10 @@ export function apply(ctx) {
       } catch {
         maps.set(map.id, { map, stars: [], edges: [], constellations: [] });
       }
+    }
+    for (const map of index.maps) {
+      const data = maps.get(map.id);
+      if (data) await replayMapJournal(map.id, data);
     }
     try {
       const parsed = JSON.parse(await fs.readFile(bindingsPath, 'utf8'));
@@ -1227,7 +1343,7 @@ export function apply(ctx) {
       touched.add(hit.star.mapId);
     }
     noteRecalls(agent?.id, turn, starIds);
-    for (const id of touched) scheduleMapSave(id);
+    for (const id of touched) scheduleStatsSave(id);
     return {
       text: [
         '<long-term-memory>',
@@ -1296,7 +1412,7 @@ export function apply(ctx) {
       star.lastRecalledAt = nowIso();
       touched.add(star.mapId);
     }
-    for (const id of touched) scheduleMapSave(id);
+    for (const id of touched) scheduleStatsSave(id);
     noteRecalls(agent?.id, turn, starIds);
     return {
       text: [
@@ -1374,7 +1490,7 @@ export function apply(ctx) {
     ]);
     maps.get(mapId).stars.push(star);
     invalidateIndex(mapId, star.id);
-    scheduleMapSave(mapId);
+    scheduleMapSave(mapId, star.id);
     return star;
   }
 
@@ -1494,7 +1610,7 @@ export function apply(ctx) {
         ]),
       );
       invalidateIndex(existing.mapId, existing.id);
-      scheduleMapSave(existing.mapId);
+      scheduleMapSave(existing.mapId, existing.id);
       metrics.saves += 1;
       metrics.lastSaveAt = nowIso();
       return {
@@ -1746,7 +1862,7 @@ export function apply(ctx) {
           { field: 'status', from: beforeStatus, to: 'archived' },
         ]);
         invalidateIndex(found.star.mapId, found.star.id);
-        scheduleMapSave(found.star.mapId);
+        scheduleMapSave(found.star.mapId, found.star.id);
         return { archived: true };
       },
     });
@@ -1979,7 +2095,7 @@ export function apply(ctx) {
               return;
             }
             const star = createStar(body, mapId, 'manual');
-            await persistMap(mapId);
+            await persistStarDelta(mapId, new Set([star.id]));
             sendJson(res, 200, { star });
             return;
           }
@@ -2002,7 +2118,7 @@ export function apply(ctx) {
             found.star.version = Number(found.star.version || 1) + 1;
             recordStarHistory(found.star, 'user', diffFields(before, found.star, changedFields));
             invalidateIndex(found.star.mapId, found.star.id);
-            await persistMap(found.star.mapId);
+            await persistStarDelta(found.star.mapId, new Set([found.star.id]));
             sendJson(res, 200, { star: found.star });
             return;
           }
@@ -2066,7 +2182,7 @@ export function apply(ctx) {
               { field: 'restore', from: current, to: target },
             ]);
             invalidateIndex(found.star.mapId, found.star.id);
-            await persistMap(found.star.mapId);
+            await persistStarDelta(found.star.mapId, new Set([found.star.id]));
             sendJson(res, 200, { star: found.star });
             return;
           }
@@ -2084,7 +2200,7 @@ export function apply(ctx) {
               constellation.starIds = (constellation.starIds || []).filter((starId) => starId !== id);
             }
             invalidateIndex(found.star.mapId, found.star.id);
-            await persistMap(found.star.mapId);
+            await persistStarDelta(found.star.mapId, new Set([id]));
             sendJson(res, 200, { deleted: true });
             return;
           }
@@ -2111,6 +2227,7 @@ export function apply(ctx) {
             await persistIndex();
             if (bindingsChanged) await persistBindings();
             await fs.unlink(mapPath(id)).catch(() => {});
+            await fs.unlink(journalPath(id)).catch(() => {});
             sendJson(res, 200, { deleted: true });
             return;
           }
