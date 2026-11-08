@@ -69,6 +69,7 @@ const DEFAULT_SETTINGS = {
   prewarmOnBoot: true,
   prewarmScope: 'bound',
   journalCheckpointMinutes: 15,
+  journalSegmentBytes: 4 * 1024 * 1024,
   lazyMaps: true,
   indexCachePersist: false,
 };
@@ -286,6 +287,8 @@ export function apply(ctx) {
   const statsTimers = new Map();
   let checkpointTimer = null;
   const journalBytes = new Map();
+  const journalSegments = new Map();
+  const JOURNAL_SEGMENT_BYTES = 4 * 1024 * 1024;
   const pendingStarSaves = new Map();
   const pendingFullSaves = new Set();
   const pendingStats = new Map();
@@ -433,14 +436,55 @@ export function apply(ctx) {
     return `${mapPath(mapId)}.journal.ndjson`;
   }
 
+  function journalSegmentPath(mapId, index) {
+    if (index <= 1) return journalPath(mapId);
+    return `${mapPath(mapId)}.journal.${String(index).padStart(4, '0')}.ndjson`;
+  }
+
+  async function removeJournalSegments(mapId) {
+    for (let index = 1; index < 1000; index += 1) {
+      try {
+        await fs.unlink(journalSegmentPath(mapId, index));
+      } catch {
+        break;
+      }
+    }
+    journalBytes.delete(mapId);
+    journalSegments.delete(mapId);
+  }
+
+  async function readJournalText(mapId) {
+    let raw = '';
+    for (let index = 1; index < 1000; index += 1) {
+      try {
+        raw += await fs.readFile(journalSegmentPath(mapId, index), 'utf8');
+      } catch {
+        break;
+      }
+    }
+    return raw;
+  }
+
   async function replayMapJournal(mapId, data) {
     let raw = '';
-    try {
-      raw = await fs.readFile(journalPath(mapId), 'utf8');
-    } catch {
-      return;
+    let index = 1;
+    let lastSize = 0;
+    for (; index < 1000; index += 1) {
+      let segment;
+      try {
+        segment = await fs.readFile(journalSegmentPath(mapId, index), 'utf8');
+      } catch {
+        break;
+      }
+      raw += segment;
+      lastSize = Buffer.byteLength(segment);
     }
+    if (index === 1) return;
     journalBytes.set(mapId, Buffer.byteLength(raw));
+    journalSegments.set(mapId, {
+      current: index - 1,
+      currentBytes: lastSize,
+    });
     applyJournalText(data, raw);
   }
 
@@ -549,7 +593,7 @@ export function apply(ctx) {
         if (data.unloaded) {
           try {
             files[`maps/${data.map.id}.json`] = await fs.readFile(mapPath(data.map.id), 'utf8');
-            const journal = await fs.readFile(journalPath(data.map.id), 'utf8').catch(() => '');
+            const journal = await readJournalText(data.map.id).catch(() => '');
             if (journal) files[`journals/${data.map.id}.ndjson`] = journal;
           } catch {
             // keep other maps in the backup even if one snapshot is unreadable
@@ -637,8 +681,7 @@ export function apply(ctx) {
       if (!data || data.unloaded) return undefined;
       await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
       await writeMapMeta(mapId, data);
-      await fs.unlink(journalPath(mapId)).catch(() => {});
-      journalBytes.delete(mapId);
+      await removeJournalSegments(mapId);
       return undefined;
     });
   }
@@ -905,23 +948,43 @@ export function apply(ctx) {
     }
   }
 
+  async function appendJournalPayload(mapId, payload, options = {}) {
+    const size = Buffer.byteLength(payload);
+    const segmentLimit = Math.max(
+      256,
+      Number(settings.journalSegmentBytes) || JOURNAL_SEGMENT_BYTES,
+    );
+    let state = journalSegments.get(mapId);
+    if (!state) {
+      state = { current: 1, currentBytes: journalBytes.get(mapId) || 0 };
+      journalSegments.set(mapId, state);
+    }
+    if (state.currentBytes > 0 && state.currentBytes + size > segmentLimit) {
+      state.current += 1;
+      state.currentBytes = 0;
+    }
+    await appendJournalFile(journalSegmentPath(mapId, state.current), payload);
+    state.currentBytes += size;
+    const nextBytes = (journalBytes.get(mapId) || 0) + size;
+    journalBytes.set(mapId, nextBytes);
+    if (options.stats) metrics.statsJournalAppends += 1;
+    else metrics.journalAppends += 1;
+    if (nextBytes > 8 * 1024 * 1024) {
+      metrics.journalCompactions += 1;
+      setTimeout(() => {
+        persistMap(mapId).catch((error) =>
+          console.error('[memory-star] compact journal failed', error),
+        );
+      }, 0);
+    }
+  }
+
   function appendJournalRecords(mapId, records) {
     if (!mapId || !records.length) return Promise.resolve();
     pageCache.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
       const payload = records.map((record) => `${JSON.stringify(record)}\n`).join('');
-      await appendJournalFile(journalPath(mapId), payload);
-      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
-      journalBytes.set(mapId, nextBytes);
-      metrics.journalAppends += 1;
-      if (nextBytes > 8 * 1024 * 1024) {
-        metrics.journalCompactions += 1;
-        setTimeout(() => {
-          persistMap(mapId).catch((error) =>
-            console.error('[memory-star] compact journal failed', error),
-          );
-        }, 0);
-      }
+      await appendJournalPayload(mapId, payload);
     });
   }
 
@@ -963,18 +1026,7 @@ export function apply(ctx) {
         );
       }
       const payload = lines.join('');
-      await appendJournalFile(journalPath(mapId), payload);
-      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
-      journalBytes.set(mapId, nextBytes);
-      metrics.journalAppends += 1;
-      if (nextBytes > 8 * 1024 * 1024) {
-        metrics.journalCompactions += 1;
-        setTimeout(() => {
-          persistMap(mapId).catch((error) =>
-            console.error('[memory-star] compact journal failed', error),
-          );
-        }, 0);
-      }
+      await appendJournalPayload(mapId, payload);
     });
   }
 
@@ -1023,14 +1075,7 @@ export function apply(ctx) {
       }
       if (!lines.length) return;
       const payload = lines.join('');
-      await appendJournalFile(journalPath(mapId), payload);
-      const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
-      journalBytes.set(mapId, nextBytes);
-      metrics.statsJournalAppends += 1;
-      if (nextBytes > 8 * 1024 * 1024) {
-        metrics.journalCompactions += 1;
-        setTimeout(() => persistMap(mapId).catch(() => {}), 0);
-      }
+      await appendJournalPayload(mapId, payload, { stats: true });
     });
   }
 
@@ -3411,7 +3456,7 @@ export function apply(ctx) {
             await persistIndex();
             if (bindingsChanged) await persistBindings();
             await fs.unlink(mapPath(id)).catch(() => {});
-            await fs.unlink(journalPath(id)).catch(() => {});
+            await removeJournalSegments(id);
             await fs.unlink(mapMetaPath(id)).catch(() => {});
             await fs.unlink(mapIndexCachePath(id)).catch(() => {});
             journalBytes.delete(id);
@@ -3921,6 +3966,7 @@ export function apply(ctx) {
                 prewarmOnBoot: settings.prewarmOnBoot !== false,
                 journalFsync: Boolean(settings.journalFsync),
                 journalCheckpointMinutes: Number(settings.journalCheckpointMinutes ?? 15),
+                journalSegmentBytes: Number(settings.journalSegmentBytes) || JOURNAL_SEGMENT_BYTES,
                 lazyMaps: settings.lazyMaps !== false,
                 indexCachePersist: settings.indexCachePersist !== false,
                 privacyOutputRedaction: settings.privacyOutputRedaction !== false,

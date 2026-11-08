@@ -845,7 +845,7 @@ weight = clamp(
 <插件数据目录>/
   index.json                  # schemaVersion + 星图清单 + 统计
   maps/<mapId>.json           # 图 + 星 + 边 + 星座（紧凑快照）
-  maps/<mapId>.json.journal.ndjson  # 写前日志
+  maps/<mapId>.json.journal.ndjson  # 写前日志，4MB 后分段为 .0002.ndjson...
   meta/<mapId>.json           # 地图统计 sidecar，供启动懒加载
   backups/backup-<date>.zip   # 启动自动备份；未加载地图含原始快照 + journal
   plugin.lock                 # profile 独占锁，退出时释放
