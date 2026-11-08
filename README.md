@@ -152,6 +152,7 @@ rian-memory-star-path/
   tests/regression.mjs  回归脚本
   tests/journal.mjs     journal 写入专项
   tests/graph.mjs       图关系召回专项
+  tests/generate-realistic-map.mjs  生成真实场景测试星图
 ```
 
 ### 回归测试
@@ -164,6 +165,14 @@ node tests/graph.mjs
 $env:DSH_MEMORY_DATA_DIR="$env:USERPROFILE\.dsh\profiles\desktop\plugin-data\rian-memory-star-path"
 node tests/journal.mjs
 ```
+
+重建真实场景测试图（会删除旧的 `测试星图 10w`）：
+
+```powershell
+node tests/generate-realistic-map.mjs
+```
+
+默认生成 18,580 颗星；可用 `DSH_TEST_MAP_SIZE` 调整基础星数。
 
 默认 API：
 
@@ -213,7 +222,7 @@ node tests/theme-contrast.mjs
 
 布局按权重分层做无规律散布，不再跑力导向；标签只在 ≤120 星时绘制。10k 热检索 p50 6.7ms、p95 9.8ms（本机 desktop profile）。
 
-100k 测试图（`测试星图 10w`）：首次打开时 Host 生成中心向外布局约 1.6s；之后每次视口请求约 30–70ms，中心视口返回约 1200–1400 颗精简星记录；拖动过程中每 160ms 节流预取，松手后只需补齐最后区域；星详情按需通过 `/stars/:id` 取完整记录；启动时先按 2500 星分片预热索引，小图几乎无感，100k 测试图约 3s；预热完成后全局检索约 2–7ms；单星写入改为 journal，不再产生约 78MB 的整图重写；索引同步约 8–20ms。
+真实场景测试图（`真实场景测试星图`）：18,580 颗星、27,835 条关系、33 个星座；含 1,051 待确认、961 归档、530 争议、4,947 条带历史、683 条带合并记录；地图快照约 29MB；首次打开布局约 0.3s，之后视口请求约 30–70ms，中心返回约 1100 颗精简记录；单星写入走 journal，不再整图重写；索引同步约 8–20ms。
 
 ### 版本
 
@@ -226,7 +235,7 @@ node tests/theme-contrast.mjs
 ## 已知限制
 
 - 星座命名目前是标签聚类，未接入 LLM 命名；
-- 100k 首次打开需要 Host 生成中心向外布局，约 1.6s；已加载区域会累积在内存，长时间向四周探索后仍会逐步变大；
+- 超大图首次打开需要 Host 生成中心向外布局；真实场景测试图约 0.3s；已加载区域会累积在内存，长时间向四周探索后仍会逐步变大；
 - 星尘历史内嵌在星对象，没有独立的 `history/<starId>.jsonl`；
 - 自动备份只在启动时生成，不是定时任务；
 - 没有云同步、多端合并或团队协作；
