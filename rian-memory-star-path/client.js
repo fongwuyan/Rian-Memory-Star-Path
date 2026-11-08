@@ -1137,8 +1137,25 @@ void main() {
       const [autoRotate, setAutoRotate] = React.useState(true);
       const layoutRef = React.useRef({ worker: null, url: null, positions: new Map(), frame: 0 });
       const [size, setSize] = React.useState({ width: 640, height: 420 });
+      const sizeRef = React.useRef(size);
+      const dataRef = React.useRef(null);
+      const loadedRef = React.useRef({
+        stars: new Map(),
+        edges: new Map(),
+        positions: new Map(),
+      });
+      const viewportSeqRef = React.useRef(0);
+      const [viewportLoading, setViewportLoading] = React.useState(false);
       const [layoutVersion, setLayoutVersion] = React.useState(0);
       const immersive = settings?.uiMode !== 'edit';
+
+      React.useEffect(() => {
+        sizeRef.current = size;
+      }, [size]);
+
+      React.useEffect(() => {
+        dataRef.current = data;
+      }, [data]);
 
       React.useEffect(() => {
         let alive = true;
@@ -1169,41 +1186,105 @@ void main() {
         applyTheme(settings?.theme || 'dark');
       }, [settings?.theme]);
 
-      const loadMap = React.useCallback(async (mapId) => {
-        if (!mapId) return;
-        try {
-          let page = await api(
-            `/maps/${encodeURIComponent(mapId)}/page?offset=0&limit=5000`,
-          );
-          let stars = page.stars || [];
-          let edges = page.edges || [];
-          let nextOffset = page.nextOffset ?? stars.length;
-          let hasMore = Boolean(page.hasMore);
-          let guard = 0;
-          while (hasMore && guard < 400) {
-            const next = await api(
-              `/maps/${encodeURIComponent(mapId)}/page?offset=${nextOffset}&limit=5000`,
-            );
-            stars = stars.concat(next.stars || []);
-            edges = edges.concat(next.edges || []);
-            nextOffset = next.nextOffset ?? stars.length;
-            hasMore = Boolean(next.hasMore);
-            guard += 1;
-          }
-          setData({
-            ...page,
-            stars: stars.concat(page.inactive || []),
-            edges,
-            constellations: page.constellations || [],
-            total: page.total ?? stars.length,
-            nextOffset: stars.length,
-            hasMore: false,
-          });
-          setSelectedId(null);
-        } catch (cause) {
-          setError(String(cause.message || cause));
+      const activeMapRef = React.useRef(null);
+
+      const mergeViewport = React.useCallback((mapId, value, replace) => {
+        const bucket = loadedRef.current;
+        if (replace) {
+          bucket.stars.clear();
+          bucket.edges.clear();
+          bucket.positions.clear();
         }
+        const positionById = new Map(
+          (value.positions || []).map((item) => [item.id, item]),
+        );
+        for (const star of value.stars || []) {
+          const point = positionById.get(star.id);
+          if (!point) continue;
+          bucket.stars.set(star.id, {
+            ...star,
+            viewportX: point.x,
+            viewportY: point.y,
+          });
+          bucket.positions.set(star.id, point);
+        }
+        for (const edge of value.edges || []) {
+          const key = edge.id || `${edge.from}|${edge.to}|${edge.relation}`;
+          bucket.edges.set(key, edge);
+        }
+        setData((previous) => ({
+          ...(previous || {}),
+          map: value.map || previous?.map,
+          publicMapId: value.publicMapId || previous?.publicMapId,
+          stars: [...bucket.stars.values()],
+          edges: [...bucket.edges.values()],
+          total: value.total ?? previous?.total ?? 0,
+          viewport: true,
+          constellations: previous?.constellations || [],
+          inactive: previous?.inactive || [],
+        }));
       }, []);
+
+      const fetchViewport = React.useCallback(
+        async (mapId, cx, cy, replace = false) => {
+          if (!mapId) return;
+          activeMapRef.current = mapId;
+          const sequence = viewportSeqRef.current + 1;
+          viewportSeqRef.current = sequence;
+          setViewportLoading(true);
+          try {
+            const width = sizeRef.current.width;
+            const height = sizeRef.current.height;
+            const value = await api(
+              `/maps/${encodeURIComponent(mapId)}/viewport?cx=${cx.toFixed(1)}&cy=${cy.toFixed(1)}&w=${width}&h=${height}&pad=320`,
+            );
+            if (sequence !== viewportSeqRef.current || activeMapRef.current !== mapId) return;
+            mergeViewport(mapId, value, replace);
+          } catch (cause) {
+            if (sequence === viewportSeqRef.current) setError(String(cause.message || cause));
+          } finally {
+            if (sequence === viewportSeqRef.current) setViewportLoading(false);
+          }
+        },
+        [mergeViewport],
+      );
+
+      const loadMap = React.useCallback(
+        async (mapId) => {
+          if (!mapId) return;
+          activeMapRef.current = mapId;
+          loadedRef.current.stars.clear();
+          loadedRef.current.edges.clear();
+          loadedRef.current.positions.clear();
+          try {
+            const meta = await api(`/maps/${encodeURIComponent(mapId)}/meta`);
+            if (activeMapRef.current !== mapId) return;
+            setData({
+              ...meta,
+              stars: [],
+              edges: [],
+              total: meta.total ?? 0,
+              viewport: true,
+            });
+            setSelectedId(null);
+            await fetchViewport(mapId, 0, 0, true);
+          } catch (cause) {
+            setError(String(cause.message || cause));
+          }
+        },
+        [fetchViewport],
+      );
+
+      const refreshViewport = React.useCallback(() => {
+        const mapId = activeMapRef.current;
+        if (!mapId) return;
+        fetchViewport(
+          mapId,
+          -pan2dRef.current.x,
+          -pan2dRef.current.y,
+          false,
+        );
+      }, [fetchViewport]);
 
       React.useEffect(() => {
         loadMap(activeId);
@@ -1230,10 +1311,13 @@ void main() {
         if (!parent) return undefined;
         const update = () => {
           const rect = parent.getBoundingClientRect();
-          setSize({
+          const next = {
             width: Math.max(320, Math.floor(rect.width)),
             height: Math.max(240, Math.floor(rect.height)),
-          });
+          };
+          sizeRef.current = next;
+          setSize(next);
+          if (activeMapRef.current) refreshViewport();
         };
         update();
         const observer = new ResizeObserver(update);
@@ -1245,6 +1329,29 @@ void main() {
         const active = (data?.stars || []).filter((star) => star.status === 'active');
         const width = size.width;
         const height = size.height;
+        if (data?.viewport) {
+          const viewportPositions = new Map();
+          for (const star of active) {
+            if (Number.isFinite(star.viewportX) && Number.isFinite(star.viewportY)) {
+              viewportPositions.set(star.id, {
+                x: width / 2 + star.viewportX,
+                y: height / 2 + star.viewportY,
+              });
+            }
+          }
+          const state = layoutRef.current;
+          state.positions = viewportPositions;
+          if (state.worker) {
+            state.worker.terminate();
+            state.worker = null;
+          }
+          if (state.url) {
+            URL.revokeObjectURL(state.url);
+            state.url = null;
+          }
+          setLayoutVersion((version) => version + 1);
+          return undefined;
+        }
         const scatterInitial = buildScatterLayout(
           active,
           width,
@@ -1457,9 +1564,13 @@ void main() {
           }
           const emptyText = stars.length
             ? ''
-            : query.trim()
-              ? '没有找到相关记忆。'
-              : '这片星域还空着。去对话里让 AI 记住一件事。';
+            : viewportLoading
+              ? '正在加载附近星域…'
+              : data?.viewport && Number(data?.total || 0) > 0
+                ? '这附近没有星，拖动探索更远的星域。'
+                : query.trim()
+                  ? '没有找到相关记忆。'
+                  : '这片星域还空着。去对话里让 AI 记住一件事。';
           const renderFrame = () => {
             const projected = glRenderer.draw(
               width,
@@ -1697,12 +1808,16 @@ void main() {
       function handlePointerUp(event) {
         if (!dragRef.current.active) return;
         dragRef.current.active = false;
+        const moved = dragRef.current.moved;
         glRef.current.renderer?.endDrag?.();
         event.currentTarget.style.cursor = 'grab';
         try {
           event.currentTarget.releasePointerCapture?.(event.pointerId);
         } catch {
           // pointer capture may already be released
+        }
+        if (settings?.viewMode === '2d' && moved > 24) {
+          window.setTimeout(() => refreshViewport(), 120);
         }
       }
 
@@ -2386,7 +2501,7 @@ void main() {
                 zIndex: 4,
               },
             },
-            '拖动平移 · 所有星散布在画布内外 · 星点固定 32px · 滚轮切图',
+            '拖动探索 · 中心密外圈疏 · 视口按需加载 · 星点固定 32px · 滚轮切图',
           ),
           settings?.viewMode !== '2d'
             ? h(

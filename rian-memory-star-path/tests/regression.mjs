@@ -82,6 +82,18 @@ async function main() {
   const pageOneIds = new Set(pageOne.stars.map((star) => star.id));
   assert.equal(pageTwo.stars.filter((star) => pageOneIds.has(star.id)).length, 0);
 
+  const meta = await request(`/maps/${encodeURIComponent(map.id)}/meta`);
+  assert.equal(meta.total, 4);
+  const viewport = await request(
+    `/maps/${encodeURIComponent(map.id)}/viewport?cx=0&cy=0&w=2000&h=2000&pad=400`,
+  );
+  assert.equal(viewport.stars.length, 4);
+  assert.equal(viewport.positions.length, 4);
+  assert.ok(
+    viewport.positions.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)),
+    'expected finite viewport positions',
+  );
+
   const probeTitle = `索引探针${stamp}`;
   const probe = await createStar(map.id, probeTitle, `增量索引验证 ${stamp}`, ['索引测试']);
   let probeSearch = await request(`/search?q=${encodeURIComponent(probeTitle)}&limit=10`);

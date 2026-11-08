@@ -235,6 +235,8 @@ export function apply(ctx) {
     journalAppends: 0,
     statsJournalAppends: 0,
     journalCompactions: 0,
+    layoutBuilds: 0,
+    lastLayoutMs: 0,
     searchCandidates: 0,
     graphExpansions: 0,
     lastSearchMs: 0,
@@ -250,6 +252,7 @@ export function apply(ctx) {
   const pendingFullSaves = new Set();
   const pendingStats = new Map();
   const indexCache = new Map();
+  const layoutCache = new Map();
   const prewarming = new Set();
   const dirtyIndex = new Set();
   const dirtyStars = new Map();
@@ -574,6 +577,7 @@ export function apply(ctx) {
             }
           }
           invalidateIndex(target.map.id);
+          layoutCache.delete(target.map.id);
           await persistMap(target.map.id);
           mergedMaps += 1;
           continue;
@@ -895,6 +899,170 @@ export function apply(ctx) {
     const base = Number(star.importance ?? TYPE_IMPORTANCE[star.type] ?? 0.5);
     const recall = Math.min(0.15, Number(star.recallCount || 0) * 0.01);
     return clamp(base * (0.35 + 0.65 * recency) + recall + (star.pinned ? 0.25 : 0), 0, 1);
+  }
+
+  function hashSeed(text) {
+    let hash = 2166136261;
+    const value = String(text);
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+  }
+
+  function mulberry32(seed) {
+    let value = seed >>> 0;
+    return function random() {
+      value = (value + 0x6d2b79f5) | 0;
+      let next = Math.imul(value ^ (value >>> 15), 1 | value);
+      next = (next + Math.imul(next ^ (next >>> 7), 61 | next)) ^ next;
+      return ((next ^ (next >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildMapLayout(mapId) {
+    const data = maps.get(mapId);
+    if (!data) return null;
+    const cached = layoutCache.get(mapId);
+    if (cached) return cached;
+    const started = Date.now();
+    const stars = data.stars.filter((star) => star.status === 'active' && !star.disputed);
+    const count = stars.length;
+    const spacing = 40;
+    const points = [];
+    if (count) {
+      const area = Math.max((count * spacing * spacing) / 0.22, 640 * 480 * 1.44);
+      const radius = Math.sqrt(area / Math.PI);
+      const random = mulberry32(hashSeed(`${mapId}:${count}:radial-v1`));
+      const cell = spacing / Math.SQRT2;
+      const buckets = new Map();
+      const fits = (x, y) => {
+        const col = Math.floor(x / cell);
+        const row = Math.floor(y / cell);
+        for (let r = row - 1; r <= row + 1; r += 1) {
+          for (let c = col - 1; c <= col + 1; c += 1) {
+            const bucket = buckets.get(`${c}:${r}`);
+            if (!bucket) continue;
+            for (const point of bucket) {
+              if (Math.hypot(point.x - x, point.y - y) < spacing) return false;
+            }
+          }
+        }
+        return true;
+      };
+      const addPoint = (x, y) => {
+        const col = Math.floor(x / cell);
+        const row = Math.floor(y / cell);
+        const key = `${col}:${row}`;
+        const point = { x, y, distance: Math.hypot(x, y) };
+        const bucket = buckets.get(key);
+        if (bucket) bucket.push(point);
+        else buckets.set(key, [point]);
+        points.push(point);
+      };
+      const maxAttempts = count * 90;
+      for (let attempt = 0; attempt < maxAttempts && points.length < count; attempt += 1) {
+        const r = radius * Math.pow(random(), 0.8);
+        const angle = random() * Math.PI * 2;
+        const x = Math.cos(angle) * r;
+        const y = Math.sin(angle) * r;
+        if (fits(x, y)) addPoint(x, y);
+      }
+      let extra = 0;
+      while (points.length < count && extra < count * 30) {
+        const r = radius * (1 + extra / Math.max(1, count * 3));
+        const angle = random() * Math.PI * 2;
+        const x = Math.cos(angle) * r;
+        const y = Math.sin(angle) * r;
+        if (fits(x, y)) addPoint(x, y);
+        extra += 1;
+      }
+      let fallback = 0;
+      while (points.length < count) {
+        const r = radius + spacing * 2 + Math.floor(fallback / 720) * spacing;
+        const angle = (fallback * 2.399963229728653) % (Math.PI * 2);
+        addPoint(Math.cos(angle) * r, Math.sin(angle) * r);
+        fallback += 1;
+      }
+    }
+    points.sort((a, b) => b.distance - a.distance);
+    const ranked = stars
+      .map((star) => ({
+        star,
+        weight: weightOf(star) + Number(star.importance ?? 0.5) * 0.6,
+      }))
+      .sort((a, b) => b.weight - a.weight);
+    const positions = new Map();
+    const starsById = new Map();
+    ranked.forEach((entry, rank) => {
+      const point = points[rank];
+      if (!point) return;
+      positions.set(entry.star.id, { x: point.x, y: point.y });
+      starsById.set(entry.star.id, entry.star);
+    });
+    const layout = {
+      mapId,
+      positions,
+      starsById,
+      total: count,
+      maxRadius: points.length ? points[0].distance : 0,
+      builtAt: Date.now(),
+    };
+    layoutCache.set(mapId, layout);
+    metrics.layoutBuilds += 1;
+    metrics.lastLayoutMs = Date.now() - started;
+    return layout;
+  }
+
+  function viewportForMap(mapId, cx, cy, width, height, padding = 260, limit = 8000) {
+    const layout = buildMapLayout(mapId);
+    const data = maps.get(mapId);
+    if (!layout || !data) return { stars: [], positions: [], edges: [], total: 0 };
+    const activeById = new Map(
+      data.stars
+        .filter((star) => star.status === 'active' && !star.disputed)
+        .map((star) => [star.id, star]),
+    );
+    const missing = [];
+    for (const starId of activeById.keys()) {
+      if (!layout.positions.has(starId)) missing.push(starId);
+    }
+    if (missing.length) {
+      missing.sort();
+      let radius = layout.maxRadius + 80;
+      for (const starId of missing) {
+        const angle = (hashSeed(starId) / 4294967296) * Math.PI * 2;
+        radius += 42;
+        layout.positions.set(starId, {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        });
+      }
+      layout.maxRadius = radius;
+    }
+    const halfWidth = Math.max(1, width) / 2 + padding;
+    const halfHeight = Math.max(1, height) / 2 + padding;
+    const left = cx - halfWidth;
+    const right = cx + halfWidth;
+    const top = cy - halfHeight;
+    const bottom = cy + halfHeight;
+    const hits = [];
+    for (const [id, point] of layout.positions) {
+      if (point.x < left || point.x > right || point.y < top || point.y > bottom) continue;
+      const star = activeById.get(id);
+      if (star) hits.push({ star, x: point.x, y: point.y });
+    }
+    hits.sort((a, b) => weightOf(b.star) - weightOf(a.star));
+    const selected = hits.slice(0, limit);
+    const ids = new Set(selected.map((hit) => hit.star.id));
+    return {
+      stars: selected.map((hit) => hit.star),
+      positions: selected.map((hit) => ({ id: hit.star.id, x: hit.x, y: hit.y })),
+      edges: (data.edges || []).filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
+      total: activeById.size,
+      truncated: hits.length > selected.length,
+    };
   }
 
   function sortedActivePage(mapId) {
@@ -2070,6 +2238,44 @@ export function apply(ctx) {
             return;
           }
 
+          if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'meta') {
+            const data = maps.get(parts[1]);
+            if (!data) {
+              sendJson(res, 404, { error: 'map not found' });
+              return;
+            }
+            const activeCount = data.stars.filter((star) => star.status === 'active').length;
+            sendJson(res, 200, {
+              map: data.map,
+              publicMapId: index.publicMapId,
+              total: activeCount,
+              inactive: data.stars.filter((star) => star.status !== 'active'),
+              constellations: data.constellations || [],
+            });
+            return;
+          }
+
+          if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'viewport') {
+            const data = maps.get(parts[1]);
+            if (!data) {
+              sendJson(res, 404, { error: 'map not found' });
+              return;
+            }
+            const cx = Number(url.searchParams.get('cx')) || 0;
+            const cy = Number(url.searchParams.get('cy')) || 0;
+            const width = Math.max(320, Number(url.searchParams.get('w')) || 1600);
+            const height = Math.max(240, Number(url.searchParams.get('h')) || 1000);
+            const padding = Math.max(0, Number(url.searchParams.get('pad')) || 260);
+            const limit = clamp(Number(url.searchParams.get('limit')) || 8000, 100, 20000);
+            const viewport = viewportForMap(parts[1], cx, cy, width, height, padding, limit);
+            sendJson(res, 200, {
+              map: data.map,
+              publicMapId: index.publicMapId,
+              ...viewport,
+            });
+            return;
+          }
+
           if (method === 'GET' && parts[0] === 'maps' && parts[1] && parts[2] === 'page') {
             const data = maps.get(parts[1]);
             if (!data) {
@@ -2298,6 +2504,7 @@ export function apply(ctx) {
             if (bindingsChanged) await persistBindings();
             await fs.unlink(mapPath(id)).catch(() => {});
             await fs.unlink(journalPath(id)).catch(() => {});
+            layoutCache.delete(id);
             sendJson(res, 200, { deleted: true });
             return;
           }
