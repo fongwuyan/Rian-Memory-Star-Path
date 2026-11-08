@@ -324,6 +324,18 @@ export function apply(ctx) {
         else data.edges.push(edge);
       } else if (record?.op === 'edge.delete' && record.id) {
         data.edges = (data.edges || []).filter((edge) => edge.id !== record.id);
+      } else if (record?.op === 'constellation.upsert' && record.constellation?.id) {
+        data.constellations = data.constellations || [];
+        const constellation = record.constellation;
+        const position = data.constellations.findIndex(
+          (item) => item.id === constellation.id,
+        );
+        if (position >= 0) data.constellations[position] = constellation;
+        else data.constellations.push(constellation);
+      } else if (record?.op === 'constellation.delete' && record.id) {
+        data.constellations = (data.constellations || []).filter(
+          (constellation) => constellation.id !== record.id,
+        );
       } else if (record?.op === 'delete' && record.id) {
         data.stars = data.stars.filter((star) => star.id !== record.id);
         data.edges = (data.edges || []).filter(
@@ -667,19 +679,11 @@ export function apply(ctx) {
     );
   }
 
-  function persistEdgeDelta(mapId, upserts = [], deletes = []) {
-    if ((!upserts.length && !deletes.length) || !mapId) return Promise.resolve();
+  function appendJournalRecords(mapId, records) {
+    if (!mapId || !records.length) return Promise.resolve();
     pageCache.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
-      const lines = [];
-      for (const edge of upserts) {
-        if (edge?.id) lines.push(`${JSON.stringify({ op: 'edge.upsert', edge })}\n`);
-      }
-      for (const id of deletes) {
-        if (id) lines.push(`${JSON.stringify({ op: 'edge.delete', id })}\n`);
-      }
-      if (!lines.length) return;
-      const payload = lines.join('');
+      const payload = records.map((record) => `${JSON.stringify(record)}\n`).join('');
       await fs.appendFile(journalPath(mapId), payload, 'utf8');
       const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
       journalBytes.set(mapId, nextBytes);
@@ -693,6 +697,28 @@ export function apply(ctx) {
         }, 0);
       }
     });
+  }
+
+  function persistEdgeDelta(mapId, upserts = [], deletes = []) {
+    const records = [];
+    for (const edge of upserts) {
+      if (edge?.id) records.push({ op: 'edge.upsert', edge });
+    }
+    for (const id of deletes) {
+      if (id) records.push({ op: 'edge.delete', id });
+    }
+    return appendJournalRecords(mapId, records);
+  }
+
+  function persistConstellationDelta(mapId, upserts = [], deletes = []) {
+    const records = [];
+    for (const constellation of upserts) {
+      if (constellation?.id) records.push({ op: 'constellation.upsert', constellation });
+    }
+    for (const id of deletes) {
+      if (id) records.push({ op: 'constellation.delete', id });
+    }
+    return appendJournalRecords(mapId, records);
   }
 
   function persistStarDelta(mapId, starIds) {    pageCache.delete(mapId);
@@ -2860,7 +2886,11 @@ export function apply(ctx) {
               };
             });
             data.constellations = [...manual, ...nextAuto];
-            await persistMap(mapId);
+            const nextIds = new Set(nextAuto.map((constellation) => constellation.id));
+            const removedAuto = previousAuto
+              .filter((constellation) => !nextIds.has(constellation.id))
+              .map((constellation) => constellation.id);
+            await persistConstellationDelta(mapId, nextAuto, removedAuto);
             sendJson(res, 200, {
               constellations: data.constellations,
               suggested: nextAuto.length,
