@@ -1128,9 +1128,12 @@ void main() {
       const canvasRef = React.useRef(null);
       const labelRef = React.useRef(null);
       const positionsRef = React.useRef([]);
+      const starLayerRef = React.useRef(null);
       const glRef = React.useRef({ canvas: null, renderer: null, mode: null });
       const drawRef = React.useRef(null);
       const dragRef = React.useRef({ active: false, lastX: 0, lastY: 0, moved: 0 });
+      const pressedStarRef = React.useRef(null);
+      const suppressBackgroundClickRef = React.useRef(false);
       const hoveredIdRef = React.useRef(null);
       const pan2dRef = React.useRef({ x: 0, y: 0 });
       const [hovered, setHovered] = React.useState(null);
@@ -1305,9 +1308,9 @@ void main() {
       }, [query]);
 
       React.useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return undefined;
-        const parent = canvas.parentElement;
+        const layer = starLayerRef.current;
+        if (!layer) return undefined;
+        const parent = layer.parentElement;
         if (!parent) return undefined;
         const update = () => {
           const rect = parent.getBoundingClientRect();
@@ -1326,6 +1329,7 @@ void main() {
       }, []);
 
       React.useEffect(() => {
+        if (!canvasRef.current) return undefined;
         const active = (data?.stars || []).filter((star) => star.status === 'active');
         const width = size.width;
         const height = size.height;
@@ -1483,8 +1487,8 @@ void main() {
       }, [data, size.width, size.height]);
 
       React.useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || maps.length < 2) return undefined;
+        const layer = starLayerRef.current;
+        if (!layer || maps.length < 2) return undefined;
         const onWheel = (event) => {
           event.preventDefault();
           const index = maps.findIndex((map) => map.id === activeId);
@@ -1495,8 +1499,8 @@ void main() {
             setMapToast(next.name);
           }
         };
-        canvas.addEventListener('wheel', onWheel, { passive: false });
-        return () => canvas.removeEventListener('wheel', onWheel);
+        layer.addEventListener('wheel', onWheel, { passive: false });
+        return () => layer.removeEventListener('wheel', onWheel);
       }, [maps, activeId]);
 
       React.useEffect(() => {
@@ -1730,9 +1734,12 @@ void main() {
 
       function applyPanTransform() {
         const transform = `translate3d(${pan2dRef.current.x}px, ${pan2dRef.current.y}px, 0)`;
-        if (canvasRef.current) canvasRef.current.style.transform = transform;
-        if (labelRef.current) labelRef.current.style.transform = transform;
+        if (starLayerRef.current) starLayerRef.current.style.transform = transform;
       }
+
+      React.useEffect(() => {
+        applyPanTransform();
+      }, [data, size]);
 
       React.useEffect(() => {
         pan2dRef.current = { x: 0, y: 0 };
@@ -1747,6 +1754,7 @@ void main() {
           lastY: event.clientY,
           moved: 0,
         };
+        pressedStarRef.current = event.target?.closest?.('[data-star-id]')?.dataset?.starId || null;
         if (settings?.viewMode !== '2d') {
           hoveredIdRef.current = null;
           setHovered(null);
@@ -1809,12 +1817,19 @@ void main() {
         if (!dragRef.current.active) return;
         dragRef.current.active = false;
         const moved = dragRef.current.moved;
+        const pressedStar = pressedStarRef.current;
+        pressedStarRef.current = null;
         glRef.current.renderer?.endDrag?.();
         event.currentTarget.style.cursor = 'grab';
         try {
           event.currentTarget.releasePointerCapture?.(event.pointerId);
         } catch {
           // pointer capture may already be released
+        }
+        if (moved <= 6 && pressedStar) {
+          suppressBackgroundClickRef.current = true;
+          setSelectedId(pressedStar);
+          setNebulaOpen(false);
         }
         if (settings?.viewMode === '2d' && moved > 24) {
           window.setTimeout(() => refreshViewport(), 120);
@@ -1910,21 +1925,16 @@ void main() {
       }
 
       function onCanvasClick(event) {
+        if (suppressBackgroundClickRef.current) {
+          suppressBackgroundClickRef.current = false;
+          return;
+        }
         if (dragRef.current.moved > 6) {
           dragRef.current.moved = 0;
           return;
         }
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        let best = null;
-        for (const item of positionsRef.current) {
-          const distance = Math.hypot(item.x - x, item.y - y);
-          if (distance <= 14 && (!best || distance < best.distance)) best = { ...item, distance };
-        }
-        setSelectedId(best ? best.star.id : null);
+        if (event.target !== event.currentTarget) return;
+        setSelectedId(null);
         setNebulaOpen(false);
       }
 
@@ -1945,6 +1955,45 @@ void main() {
       const pending = (data?.stars || []).filter((star) => star.status === 'pending');
       const activeCount =
         data?.total ?? (data?.stars || []).filter((star) => star.status === 'active').length;
+      const renderedStars = (data?.stars || [])
+        .filter(
+          (star) =>
+            star.status === 'active' &&
+            Number.isFinite(star.viewportX) &&
+            Number.isFinite(star.viewportY),
+        )
+        .map((star) => ({
+          star,
+          weight: weightOf(star),
+          x: size.width / 2 + star.viewportX,
+          y: size.height / 2 + star.viewportY,
+        }));
+      const renderedById = new Map(renderedStars.map((item) => [item.star.id, item]));
+      const renderedEdges = (data?.edges || [])
+        .map((edge) => {
+          const from = renderedById.get(edge.from);
+          const to = renderedById.get(edge.to);
+          return from && to ? { edge, from, to } : null;
+        })
+        .filter(Boolean);
+      const renderedConstellations = (data?.constellations || [])
+        .map((constellation) => {
+          const points = (constellation.starIds || [])
+            .map((id) => renderedById.get(id))
+            .filter(Boolean);
+          return points.length >= 3 ? { constellation, points } : null;
+        })
+        .filter(Boolean);
+      const showLabels = renderedStars.length > 0 && renderedStars.length <= 120;
+      const emptyViewportText = renderedStars.length
+        ? ''
+        : viewportLoading
+          ? '正在加载附近星域…'
+          : data?.viewport && Number(data?.total || 0) > 0
+            ? '这附近没有星，拖动探索更远的星域。'
+            : query.trim()
+              ? '没有找到相关记忆。'
+              : '这片星域还空着。去对话里让 AI 记住一件事。';
       const archivedStars = (data?.stars || [])
         .filter((star) => star.status === 'archived')
         .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
@@ -2450,43 +2499,180 @@ void main() {
           'div',
           { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#02030A' } },
           h('div', { className: 'ms-nebula', 'aria-hidden': true }),
-          h('canvas', {
-            ref: canvasRef,
-            tabIndex: 0,
-            onClick: onCanvasClick,
-            onKeyDown: handleKeyDown,
-            onPointerDown: handlePointerDown,
-            onPointerMove: handlePointerMove,
-            onPointerUp: handlePointerUp,
-            onPointerCancel: handlePointerUp,
-            onPointerLeave: handlePointerLeave,
-            onDoubleClick: handleDoubleClick,
-            style: {
-              display: 'block',
-              width: '100%',
-              height: '100%',
-              position: 'relative',
-              zIndex: 1,
-              cursor: 'grab',
-              background: 'transparent',
-              transform: 'translate3d(0, 0, 0)',
-              outline: 'none',
+          h(
+            'div',
+            {
+              ref: starLayerRef,
+              tabIndex: 0,
+              onClick: onCanvasClick,
+              onKeyDown: handleKeyDown,
+              onPointerDown: handlePointerDown,
+              onPointerMove: handlePointerMove,
+              onPointerUp: handlePointerUp,
+              onPointerCancel: handlePointerUp,
+              onPointerLeave: handlePointerLeave,
+              onDoubleClick: handleDoubleClick,
+              style: {
+                position: 'absolute',
+                inset: 0,
+                zIndex: 1,
+                cursor: 'grab',
+                transform: 'translate3d(0, 0, 0)',
+                outline: 'none',
+                willChange: 'transform',
+              },
             },
-          }),
-          h('canvas', {
-            ref: labelRef,
-            'aria-hidden': true,
-            style: {
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 2,
-              transform: 'translate3d(0, 0, 0)',
-            },
-          }),
+            h(
+              'svg',
+              {
+                width: '100%',
+                height: '100%',
+                style: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' },
+                'aria-hidden': true,
+              },
+              renderedConstellations.map(({ constellation, points }) =>
+                h('polygon', {
+                  key: `constellation-${constellation.id || points[0].star.id}`,
+                  points: points.map((point) => `${point.x},${point.y}`).join(' '),
+                  fill: 'none',
+                  stroke: 'rgba(190,203,255,0.22)',
+                  strokeWidth: 1,
+                  strokeDasharray: '4 8',
+                }),
+              ),
+              renderedEdges.map(({ edge, from, to }) =>
+                h('line', {
+                  key: edge.id || `${edge.from}-${edge.to}-${edge.relation}`,
+                  x1: from.x,
+                  y1: from.y,
+                  x2: to.x,
+                  y2: to.y,
+                  stroke:
+                    edge.relation === 'contradicts'
+                      ? 'rgba(255,122,122,0.45)'
+                      : 'rgba(174,196,255,0.28)',
+                  strokeWidth: 1,
+                  strokeDasharray: edge.relation === 'related' ? '3 7' : undefined,
+                }),
+              ),
+            ),
+            renderedStars.map(({ star, weight, x, y }) => {
+              const color = TYPE_COLOR[star.type] || '#CFE3FF';
+              const isSelected = selectedId === star.id;
+              return h(
+                'button',
+                {
+                  key: star.id,
+                  type: 'button',
+                  title: star.title,
+                  'data-star-id': star.id,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    if (dragRef.current.moved > 6) {
+                      dragRef.current.moved = 0;
+                      return;
+                    }
+                    setSelectedId(star.id);
+                    setNebulaOpen(false);
+                  },
+                  style: {
+                    position: 'absolute',
+                    left: x,
+                    top: y,
+                    width: 32,
+                    height: 32,
+                    padding: 0,
+                    border: 'none',
+                    background: 'transparent',
+                    transform: 'translate(-50%, -50%)',
+                    cursor: 'pointer',
+                    opacity: 0.55 + weight * 0.45,
+                    zIndex: isSelected ? 4 : 2,
+                  },
+                },
+                h('span', {
+                  'aria-hidden': true,
+                  style: {
+                    position: 'absolute',
+                    inset: 0,
+                    borderRadius: '50%',
+                    background: `radial-gradient(circle, ${color}66 0%, ${color}22 34%, transparent 70%)`,
+                  },
+                }),
+                h('span', {
+                  'aria-hidden': true,
+                  style: {
+                    position: 'absolute',
+                    left: '50%',
+                    top: '50%',
+                    width: 15,
+                    height: 15,
+                    transform: 'translate(-50%, -50%)',
+                    background: color,
+                    clipPath:
+                      'polygon(50% 0%, 58% 42%, 100% 50%, 58% 58%, 50% 100%, 42% 58%, 0% 50%, 42% 42%)',
+                    boxShadow: `0 0 ${8 + weight * 10}px ${color}`,
+                  },
+                }),
+                isSelected
+                  ? h('span', {
+                      'aria-hidden': true,
+                      style: {
+                        position: 'absolute',
+                        inset: 2,
+                        borderRadius: '50%',
+                        border: `1px solid ${color}`,
+                        boxShadow: `0 0 12px ${color}88`,
+                      },
+                    })
+                  : null,
+              );
+            }),
+            showLabels
+              ? renderedStars.map(({ star, x, y }) =>
+                  h(
+                    'span',
+                    {
+                      key: `label-${star.id}`,
+                      style: {
+                        position: 'absolute',
+                        left: x + 18,
+                        top: y - 8,
+                        fontSize: '11px',
+                        color: 'rgba(235,240,255,0.82)',
+                        textShadow: '0 1px 6px rgba(0,0,0,0.8)',
+                        whiteSpace: 'nowrap',
+                        pointerEvents: 'none',
+                        display: 'inline-block',
+                        maxWidth: 150,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      },
+                    },
+                    star.title,
+                  ),
+                )
+              : null,
+          ),
+          emptyViewportText
+            ? h(
+                'div',
+                {
+                  style: {
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    zIndex: 3,
+                    pointerEvents: 'none',
+                    color: 'rgba(232,236,255,0.62)',
+                    fontSize: '14px',
+                    letterSpacing: '0.02em',
+                  },
+                },
+                emptyViewportText,
+              )
+            : null,
           h('div', { className: 'ms-vignette', 'aria-hidden': true }),
           h(
             'div',
