@@ -67,6 +67,7 @@ const DEFAULT_SETTINGS = {
   journalFsync: false,
   prewarmOnBoot: true,
   prewarmScope: 'bound',
+  journalCheckpointMinutes: 15,
 };
 
 const CREDENTIAL_RE =
@@ -254,6 +255,7 @@ export function apply(ctx) {
     journalAppends: 0,
     statsJournalAppends: 0,
     journalCompactions: 0,
+    journalCheckpoints: 0,
     layoutBuilds: 0,
     lastLayoutMs: 0,
     viewportRequests: 0,
@@ -270,6 +272,7 @@ export function apply(ctx) {
   };
   const saveTimers = new Map();
   const statsTimers = new Map();
+  let checkpointTimer = null;
   const journalBytes = new Map();
   const pendingStarSaves = new Map();
   const pendingFullSaves = new Set();
@@ -2370,6 +2373,22 @@ export function apply(ctx) {
     };
   }
 
+  function startJournalCheckpoint() {
+    const minutes = Number(settings.journalCheckpointMinutes ?? 15);
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    const interval = Math.max(60_000, minutes * 60_000);
+    checkpointTimer = setInterval(() => {
+      for (const [mapId, bytes] of journalBytes) {
+        if (bytes < 2 * 1024 * 1024) continue;
+        metrics.journalCheckpoints += 1;
+        persistMap(mapId).catch((error) =>
+          console.error('[memory-star] journal checkpoint failed', error),
+        );
+      }
+    }, interval);
+    checkpointTimer.unref?.();
+  }
+
   function registerTools() {
     ctx.tools.register({
       name: 'memory_search',
@@ -3494,6 +3513,14 @@ export function apply(ctx) {
               (sum, value) => sum + value,
               0,
             );
+            let snapshotBytes = 0;
+            for (const map of index.maps) {
+              try {
+                snapshotBytes += (await fs.stat(mapPath(map.id))).size;
+              } catch {
+                // map may not have been persisted yet
+              }
+            }
             const mapsDetail = index.maps.map((map) => {
               const stars = maps.get(map.id)?.stars || [];
               return {
@@ -3525,6 +3552,7 @@ export function apply(ctx) {
               mapsDetail,
               metrics: { ...metrics },
               storage: {
+                snapshotBytes,
                 journalBytes: journalBytesTotal,
                 journalMaps: journalBytes.size,
                 indexMaps: indexCache.size,
@@ -3537,6 +3565,7 @@ export function apply(ctx) {
                 prewarmScope: settings.prewarmScope,
                 prewarmOnBoot: settings.prewarmOnBoot !== false,
                 journalFsync: Boolean(settings.journalFsync),
+                journalCheckpointMinutes: Number(settings.journalCheckpointMinutes ?? 15),
                 privacyOutputRedaction: settings.privacyOutputRedaction !== false,
               },
               backups,
@@ -3562,8 +3591,13 @@ export function apply(ctx) {
   registerPrompt();
   registerAgentHooks();
   ctx.effect(() => registerApi());
+  ready.then(() => startJournalCheckpoint());
 
   ctx.effect(() => () => {
+    if (checkpointTimer) {
+      clearInterval(checkpointTimer);
+      checkpointTimer = null;
+    }
     for (const timer of saveTimers.values()) clearTimeout(timer);
     saveTimers.clear();
     const writes = [];

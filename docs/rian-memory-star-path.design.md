@@ -799,7 +799,7 @@ weight = clamp(
 - 单星 upsert/delete、边/星座 upsert/delete、召回 stats 追加到 `*.journal.ndjson`，启动时回放；
 - 设置 `journalFsync: true` 时 journal 追加后 fsync；profile 级 `plugin.lock` 阻止多进程同时写；
 - 手动 `POST /stars` 与模型 `memory_save` 共用 `upsertStarToMap`，同样做相似合并、连边和 history；
-- journal 超过 8MB 或插件卸载时压缩回全量快照；
+- journal 超过 8MB 或插件卸载时压缩回全量快照；另有 15 分钟定期 checkpoint，单图 journal >2MB 时压缩；
 - 召回统计追加 `stats` 记录，30 秒批量保存，避免每 turn 重写整图；
 
 ### 10.3 并发
