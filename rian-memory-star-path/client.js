@@ -1792,6 +1792,7 @@ void main() {
         }
         event.currentTarget.focus?.();
         event.currentTarget.style.cursor = 'grabbing';
+        document.body.classList.add('ms-dragging');
         event.currentTarget.setPointerCapture?.(event.pointerId);
       }
 
@@ -1849,6 +1850,7 @@ void main() {
       function handlePointerUp(event) {
         if (!dragRef.current.active) return;
         dragRef.current.active = false;
+        document.body.classList.remove('ms-dragging');
         const moved = dragRef.current.moved;
         const pressedStar = pressedStarRef.current;
         pressedStarRef.current = null;
@@ -1885,6 +1887,7 @@ void main() {
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
           window.removeEventListener('pointercancel', onUp);
+          document.body.classList.remove('ms-dragging');
         };
       }, []);
 
@@ -2407,6 +2410,7 @@ void main() {
 .ms-scroll::-webkit-scrollbar{width:6px;height:6px}
 .ms-scroll::-webkit-scrollbar-thumb{background:var(--ms-border);border-radius:999px}
 .ms-tooltip{animation:ms-fade .16s ease-out}
+.ms-dragging, .ms-dragging *{cursor:grabbing !important}
 .ms-shell button{border:1px solid var(--ms-border);background:var(--ms-subtle);color:var(--ms-text);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;transition:filter .18s ease,background .18s ease,box-shadow .18s ease}
 .ms-shell button:hover{filter:brightness(1.08);box-shadow:0 4px 14px rgba(0,0,0,.14)}
 .ms-shell button:disabled{opacity:.4;cursor:default;box-shadow:none}
@@ -2578,7 +2582,7 @@ void main() {
               tabIndex: 0,
               onClick: onCanvasClick,
               onKeyDown: handleKeyDown,
-              onPointerDown: handlePointerDown,
+              onPointerDownCapture: handlePointerDown,
               onPointerLeave: handlePointerLeave,
               onDoubleClick: handleDoubleClick,
               onDragStart: (event) => event.preventDefault(),
