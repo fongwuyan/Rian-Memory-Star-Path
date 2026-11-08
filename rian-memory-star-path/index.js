@@ -231,6 +231,7 @@ export function apply(ctx) {
     briefs: 0,
     indexRebuilds: 0,
     indexSyncs: 0,
+    indexPrewarms: 0,
     searchCandidates: 0,
     graphExpansions: 0,
     lastSearchMs: 0,
@@ -241,6 +242,7 @@ export function apply(ctx) {
   };
   const saveTimers = new Map();
   const indexCache = new Map();
+  const prewarming = new Set();
   const dirtyIndex = new Set();
   const dirtyStars = new Map();
   const writeQueues = new Map();
@@ -249,6 +251,15 @@ export function apply(ctx) {
 
   const ready = boot()
     .then(() => createAutoBackup())
+    .then(() => {
+      const timer = setTimeout(() => {
+        for (const map of index.maps) {
+          const data = maps.get(map.id);
+          if (data && data.stars.length >= 2000) prewarmIndex(map.id);
+        }
+      }, 2500);
+      timer.unref?.();
+    })
     .catch((error) => {
       bootError = error;
       console.error('[memory-star] boot failed', error);
@@ -929,6 +940,41 @@ export function apply(ctx) {
     if (dirtyIndex.has(mapId)) return syncIndex(mapId, cached);
     if (dirtyStars.has(mapId)) return syncDirtyStars(mapId, cached);
     return cached;
+  }
+
+  async function prewarmIndex(mapId) {
+    if (indexCache.has(mapId) || prewarming.has(mapId)) return;
+    const data = maps.get(mapId);
+    if (!data || data.stars.length < 2000) return;
+    prewarming.add(mapId);
+    const started = Date.now();
+    const index = {
+      mapId,
+      docs: new Map(),
+      postings: new Map(),
+      df: new Map(),
+      count: 0,
+      totalLen: 0,
+      avgdl: 1,
+    };
+    try {
+      for (let cursor = 0; cursor < data.stars.length; cursor += 2500) {
+        if (indexCache.has(mapId) || dirtyIndex.has(mapId) || dirtyStars.has(mapId)) return;
+        const end = Math.min(data.stars.length, cursor + 2500);
+        for (let position = cursor; position < end; position += 1) {
+          const star = data.stars[position];
+          if (star.status !== 'active' || star.disputed) continue;
+          addIndexDoc(index, star);
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (indexCache.has(mapId) || dirtyIndex.has(mapId) || dirtyStars.has(mapId)) return;
+      indexCache.set(mapId, index);
+      metrics.indexPrewarms += 1;
+      metrics.lastIndexMs = Date.now() - started;
+    } finally {
+      prewarming.delete(mapId);
+    }
   }
 
   function bm25Score(doc, queryTerms, index) {
@@ -1872,6 +1918,7 @@ export function apply(ctx) {
               nextOffset: Math.min(total, offset + page.length),
               hasMore: offset + page.length < total,
             });
+            if (total >= 2000) setTimeout(() => prewarmIndex(parts[1]), 0);
             return;
           }
 
