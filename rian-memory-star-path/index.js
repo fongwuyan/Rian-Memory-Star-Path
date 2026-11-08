@@ -261,6 +261,7 @@ export function apply(ctx) {
     journalCheckpoints: 0,
     mapsLoaded: 0,
     mapsUnloaded: 0,
+    bootMs: 0,
     layoutBuilds: 0,
     lastLayoutMs: 0,
     viewportRequests: 0,
@@ -1041,6 +1042,7 @@ export function apply(ctx) {
   }
 
   async function boot() {
+    const bootStarted = Date.now();
     let profileRoot = process.env.DSH_PROFILE_DIR;
     if (!profileRoot) {
       try {
@@ -1097,18 +1099,22 @@ export function apply(ctx) {
       await persistIndex();
       await persistMap(publicMap.id);
     }
-    for (const map of index.maps) {
-      if (maps.has(map.id)) continue;
-      try {
-        maps.set(map.id, JSON.parse(await fs.readFile(mapPath(map.id), 'utf8')));
-      } catch {
-        maps.set(map.id, { map, stars: [], edges: [], constellations: [] });
-      }
-    }
-    for (const map of index.maps) {
-      const data = maps.get(map.id);
-      if (data) await replayMapJournal(map.id, data);
-    }
+    await Promise.all(
+      index.maps.map(async (map) => {
+        if (maps.has(map.id)) return;
+        try {
+          maps.set(map.id, JSON.parse(await fs.readFile(mapPath(map.id), 'utf8')));
+        } catch {
+          maps.set(map.id, { map, stars: [], edges: [], constellations: [] });
+        }
+      }),
+    );
+    await Promise.all(
+      index.maps.map(async (map) => {
+        const data = maps.get(map.id);
+        if (data) await replayMapJournal(map.id, data);
+      }),
+    );
     try {
       const parsed = JSON.parse(await fs.readFile(bindingsPath, 'utf8'));
       for (const [key, value] of Object.entries(parsed)) bindings.set(key, value);
@@ -1121,6 +1127,7 @@ export function apply(ctx) {
       // defaults
     }
     HALF_LIFE_DAYS = Number(settings.halfLifeDays) || 45;
+    metrics.bootMs = Date.now() - bootStarted;
   }
 
   function isSubagent(agent) {

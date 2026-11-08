@@ -7,6 +7,7 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 启动地图读取与 journal 回放改为按地图并行；`/health.metrics.bootMs` 记录启动耗时（当前约 875ms）。
 - 地图懒加载：启动完成备份/预热后，非公共、非绑定的 3000+ 星地图降为元信息占位；`/meta`、viewport、page、导出、搜索等首次访问自动加载。`lazyMaps:false` 可关闭。
 - boot 失败时 API 返回明确 503，`/health` 暴露 `bootError`，不再退化成后续 500。
 - 新增 journal 定期 checkpoint：每 15 分钟检查，单图 journal 超过 2MB 时压缩为紧凑快照；`/health.storage` 增加 `snapshotBytes`。
