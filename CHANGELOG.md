@@ -7,6 +7,8 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 召回统一走 `retrieveHits`：先用原始候选扩图，再做重复抑制；pinned 保留最低召回位，brief 不再压掉 pinned。
+- 图扩展改为邻接表，支持 5000 条以上关系边的大图。
 - 增加 profile 级 `plugin.lock`：同一数据目录只允许一个 DSH 进程写入；关闭时释放。
 - 新增 `journalFsync` 设置，开启后 journal 追加会 fsync 后再返回。
 - 手动新建与模型保存统一到 `upsertStarToMap`：同样的相似合并、related/contradicts 边、history 和 journal。

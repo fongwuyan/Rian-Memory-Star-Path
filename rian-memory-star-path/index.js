@@ -1740,18 +1740,19 @@ export function apply(ctx) {
     const usable = data.edges.filter((edge) =>
       ['related', 'supports', 'derived', 'part-of'].includes(edge.relation),
     );
-    if (!usable.length || usable.length > 5000) return hits;
+    if (!usable.length || usable.length > 200000) return hits;
     const byId = new Map(data.stars.map((star) => [star.id, star]));
+    const adjacency = new Map();
+    for (const edge of usable) {
+      if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
+      if (!adjacency.has(edge.to)) adjacency.set(edge.to, []);
+      adjacency.get(edge.from).push(edge.to);
+      adjacency.get(edge.to).push(edge.from);
+    }
     const seen = new Set(hits.map((hit) => hit.star.id));
     const extras = [];
     for (const hit of hits.slice(0, Math.min(hits.length, limit * 2))) {
-      for (const edge of usable) {
-        const neighborId =
-          edge.from === hit.star.id
-            ? edge.to
-            : edge.to === hit.star.id
-              ? edge.from
-              : null;
+      for (const neighborId of adjacency.get(hit.star.id) || []) {
         if (!neighborId || seen.has(neighborId)) continue;
         const star = byId.get(neighborId);
         if (!star || star.status !== 'active' || star.disputed) continue;
@@ -1773,6 +1774,41 @@ export function apply(ctx) {
     );
   }
 
+  function retrieveHits(agent, mapId, query, options = {}) {
+    const limit = Math.max(1, Number(options.limit ?? settings.topK) || 6);
+    const turn = Number(options.turn ?? 0) || 0;
+    const allowGraph = options.allowGraph !== false;
+    const raw = searchInternal(agent, mapId, query, Math.min(50, limit * 4));
+    if (!raw.length) return [];
+    let combined = raw.slice();
+    if (allowGraph) {
+      combined = expandHitsWithGraph(mapId, combined, limit * 2);
+    }
+    const seen = new Set();
+    const allowed = [];
+    const suppressedPinned = [];
+    for (const hit of combined) {
+      if (seen.has(hit.star.id)) continue;
+      seen.add(hit.star.id);
+      if (isRecallSuppressed(agent?.id, hit.star.id, turn)) {
+        if (hit.star.pinned) suppressedPinned.push(hit);
+        continue;
+      }
+      allowed.push(hit);
+    }
+    if (suppressedPinned.length) {
+      allowed.push(...suppressedPinned.slice(0, 1));
+    }
+    return allowed
+      .sort((a, b) => {
+        const ap = a.star.pinned ? 1 : 0;
+        const bp = b.star.pinned ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return b.score - a.score;
+      })
+      .slice(0, limit);
+  }
+
   function recallForAgent(agent, mapId, query, turn = 0) {
     if (settings.privacyIncognito) return { text: '', count: 0, starIds: [] };
     if (isSessionMuted(agent)) return { text: '', count: 0, starIds: [] };
@@ -1782,12 +1818,11 @@ export function apply(ctx) {
     metrics.recalls += 1;
     metrics.lastRecallAt = nowIso();
     const topK = Math.max(1, Number(settings.topK) || 6);
-    let hits = searchInternal(agent, mapId, query, Math.min(50, topK * 3))
-      .filter((hit) => !isRecallSuppressed(agent?.id, hit.star.id, turn));
-    if (hits.length < topK) {
-      hits = expandHitsWithGraph(mapId, hits, topK);
-    }
-    hits = hits.slice(0, topK);
+    const hits = retrieveHits(agent, mapId, query, {
+      limit: topK,
+      turn,
+      allowGraph: true,
+    });
     if (!hits.length) return { text: '', count: 0, starIds: [] };
     const lines = [];
     const starIds = [];
@@ -1832,7 +1867,8 @@ export function apply(ctx) {
       const publicStars = publicData.stars
         .filter(
           (star) =>
-            star.status === 'active' && !isRecallSuppressed(agent?.id, star.id, turn),
+            star.status === 'active' &&
+            (star.pinned || !isRecallSuppressed(agent?.id, star.id, turn)),
         )
         .sort((a, b) => weightOf(b, at) - weightOf(a, at))
         .slice(0, 2);
@@ -1843,7 +1879,8 @@ export function apply(ctx) {
       const projectStars = projectData.stars
         .filter(
           (star) =>
-            star.status === 'active' && !isRecallSuppressed(agent?.id, star.id, turn),
+            star.status === 'active' &&
+            (star.pinned || !isRecallSuppressed(agent?.id, star.id, turn)),
         )
         .sort((a, b) => {
           const ap = a.pinned ? 1 : 0;
