@@ -2084,6 +2084,32 @@ export function apply(ctx) {
     }
   }
 
+  function semanticConflict(nextFact, oldFact, similarity) {
+    if (!oldFact || similarity < 0.5) return false;
+    const next = String(nextFact || '');
+    const old = String(oldFact || '');
+    const negate =
+      /不要|不再|不使用|不支持|不是|停止|禁用|废弃|移除|never|not\b|no\b|deprecated|removed/i;
+    if (negate.test(next) !== negate.test(old)) return true;
+    const switchCue = /改用|换成|替换|迁移|切换|instead|switch|replace|migrate/i;
+    if (
+      (switchCue.test(next) || switchCue.test(old)) &&
+      similarity < 0.92
+    ) {
+      return true;
+    }
+    const numbers = (text) => new Set(text.match(/\d+(?:\.\d+)?/g) || []);
+    const nextNumbers = numbers(next);
+    const oldNumbers = numbers(old);
+    if (nextNumbers.size && oldNumbers.size) {
+      const same =
+        nextNumbers.size === oldNumbers.size &&
+        [...nextNumbers].every((value) => oldNumbers.has(value));
+      if (!same) return true;
+    }
+    return false;
+  }
+
   async function upsertStarToMap(mapId, input, sourceKind = 'model', options = {}) {
     const title = String(input.title ?? '').trim();
     const fact = String(input.fact ?? '').trim();
@@ -2096,7 +2122,10 @@ export function apply(ctx) {
     const actor = sourceKind === 'manual' ? 'user' : 'model';
     const candidates = similarStars(mapId, title, fact);
     const best = candidates[0];
-    if (best && best.similarity > 0.8) {
+    const conflict = best
+      ? semanticConflict(fact, best.star.fact, best.similarity)
+      : false;
+    if (best && best.similarity > 0.8 && !conflict) {
       const existing = best.star;
       const before = {
         title: existing.title,
@@ -2163,11 +2192,11 @@ export function apply(ctx) {
       scheduleMapSave(existing.mapId, existing.id);
       metrics.saves += 1;
       metrics.lastSaveAt = nowIso();
-      return { status: 'merged', star: existing, merged: true };
+      return { status: 'merged', star: existing, merged: true, conflict: false };
     }
     const star = createStar(input, mapId, sourceKind, options.sessionId);
     const newEdges = [];
-    if (best && best.similarity > 0.6) {
+    if (best && best.similarity > 0.6 && !conflict) {
       const edge = {
         id: uid('ed'),
         from: star.id,
@@ -2179,11 +2208,7 @@ export function apply(ctx) {
       maps.get(mapId).edges.push(edge);
       newEdges.push(edge);
     }
-    if (
-      best &&
-      best.similarity > 0.45 &&
-      /不要|改用|不是|停止|换成|instead|switch/i.test(String(input.fact ?? ''))
-    ) {
+    if (best && conflict) {
       if (!best.star.disputed) {
         best.star.disputed = true;
         best.star.version = Number(best.star.version || 1) + 1;
@@ -2205,7 +2230,7 @@ export function apply(ctx) {
     if (newEdges.length) await persistEdgeDelta(mapId, newEdges);
     metrics.saves += 1;
     metrics.lastSaveAt = nowIso();
-    return { status: star.status, star, merged: false };
+    return { status: star.status, star, merged: false, conflict };
   }
 
   async function saveStarForAgent(agent, args) {
@@ -2248,9 +2273,11 @@ export function apply(ctx) {
       id: result.star.id,
       message: result.merged
         ? 'Merged into an existing memory.'
-        : result.star.status === 'pending'
-          ? 'Saved to the nebula for confirmation.'
-          : 'Saved.',
+        : result.conflict
+          ? 'Saved as a new memory; a conflicting older memory was marked disputed.'
+          : result.star.status === 'pending'
+            ? 'Saved to the nebula for confirmation.'
+            : 'Saved.',
       map: maps.get(mapId)?.map.name || '',
       mapKind: maps.get(mapId)?.map.kind || 'project',
     };
@@ -2811,6 +2838,7 @@ export function apply(ctx) {
               star: result.star,
               status: result.status,
               merged: Boolean(result.merged),
+              conflict: Boolean(result.conflict),
             });
             return;
           }
