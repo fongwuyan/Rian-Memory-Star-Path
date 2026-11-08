@@ -1151,6 +1151,9 @@ void main() {
       const viewportSeqRef = React.useRef(0);
       const viewportRequestRef = React.useRef({ inFlight: false, pending: null });
       const viewportTimerRef = React.useRef(0);
+      const viewportFlushTimerRef = React.useRef(0);
+      const viewportInfoRef = React.useRef(null);
+      const viewportDirtyRef = React.useRef(false);
       const fetchViewportRef = React.useRef(null);
       const [viewportLoading, setViewportLoading] = React.useState(false);
       const [layoutVersion, setLayoutVersion] = React.useState(0);
@@ -1201,6 +1204,7 @@ void main() {
           bucket.stars.clear();
           bucket.edges.clear();
           bucket.positions.clear();
+          viewportDirtyRef.current = true;
         }
         const positionById = new Map(
           (value.positions || []).map((item) => [item.id, item]),
@@ -1208,9 +1212,10 @@ void main() {
         for (const star of value.stars || []) {
           const point = positionById.get(star.id);
           if (!point) continue;
-          const previousStar = bucket.stars.get(star.id) || {};
+          const previousStar = bucket.stars.get(star.id);
+          if (!previousStar) viewportDirtyRef.current = true;
           bucket.stars.set(star.id, {
-            ...previousStar,
+            ...(previousStar || {}),
             ...star,
             viewportX: point.x,
             viewportY: point.y,
@@ -1219,15 +1224,33 @@ void main() {
         }
         for (const edge of value.edges || []) {
           const key = edge.id || `${edge.from}|${edge.to}|${edge.relation}`;
+          if (!bucket.edges.has(key)) viewportDirtyRef.current = true;
           bucket.edges.set(key, edge);
         }
+        if (viewportInfoRef.current?.total !== value.total) {
+          viewportDirtyRef.current = true;
+        }
+        viewportInfoRef.current = {
+          mapId,
+          map: value.map,
+          publicMapId: value.publicMapId,
+          total: value.total,
+        };
+      }, []);
+
+      const flushViewport = React.useCallback(() => {
+        const info = viewportInfoRef.current;
+        if (!info || info.mapId !== activeMapRef.current) return;
+        if (!viewportDirtyRef.current) return;
+        viewportDirtyRef.current = false;
+        const bucket = loadedRef.current;
         setData((previous) => ({
           ...(previous || {}),
-          map: value.map || previous?.map,
-          publicMapId: value.publicMapId || previous?.publicMapId,
+          map: info.map || previous?.map,
+          publicMapId: info.publicMapId || previous?.publicMapId,
           stars: [...bucket.stars.values()],
           edges: [...bucket.edges.values()],
-          total: value.total ?? previous?.total ?? 0,
+          total: info.total ?? previous?.total ?? 0,
           viewport: true,
           constellations: previous?.constellations || [],
           inactive: previous?.inactive || [],
@@ -1246,7 +1269,8 @@ void main() {
           activeMapRef.current = mapId;
           const sequence = viewportSeqRef.current + 1;
           viewportSeqRef.current = sequence;
-          setViewportLoading(true);
+          const showLoading = loadedRef.current.stars.size === 0;
+          if (showLoading) setViewportLoading(true);
           try {
             const width = sizeRef.current.width;
             const height = sizeRef.current.height;
@@ -1255,11 +1279,23 @@ void main() {
             );
             if (sequence !== viewportSeqRef.current || activeMapRef.current !== mapId) return;
             mergeViewport(mapId, value, replace);
+            if (replace) {
+              if (viewportFlushTimerRef.current) {
+                window.clearTimeout(viewportFlushTimerRef.current);
+                viewportFlushTimerRef.current = 0;
+              }
+              flushViewport();
+            } else if (!viewportFlushTimerRef.current) {
+              viewportFlushTimerRef.current = window.setTimeout(() => {
+                viewportFlushTimerRef.current = 0;
+                flushViewport();
+              }, 180);
+            }
           } catch (cause) {
             if (sequence === viewportSeqRef.current) setError(String(cause.message || cause));
           } finally {
             request.inFlight = false;
-            if (sequence === viewportSeqRef.current) setViewportLoading(false);
+            if (showLoading && sequence === viewportSeqRef.current) setViewportLoading(false);
             const pending = request.pending;
             request.pending = null;
             if (pending && pending.mapId === activeMapRef.current) {
@@ -1276,7 +1312,7 @@ void main() {
             }
           }
         },
-        [mergeViewport],
+        [mergeViewport, flushViewport],
       );
       fetchViewportRef.current = fetchViewport;
 
@@ -1284,6 +1320,12 @@ void main() {
         async (mapId) => {
           if (!mapId) return;
           activeMapRef.current = mapId;
+          if (viewportFlushTimerRef.current) {
+            window.clearTimeout(viewportFlushTimerRef.current);
+            viewportFlushTimerRef.current = 0;
+          }
+          viewportInfoRef.current = null;
+          viewportDirtyRef.current = false;
           loadedRef.current.stars.clear();
           loadedRef.current.edges.clear();
           loadedRef.current.positions.clear();
@@ -1869,6 +1911,11 @@ void main() {
             window.clearTimeout(viewportTimerRef.current);
             viewportTimerRef.current = 0;
           }
+          if (viewportFlushTimerRef.current) {
+            window.clearTimeout(viewportFlushTimerRef.current);
+            viewportFlushTimerRef.current = 0;
+            flushViewport();
+          }
           window.setTimeout(() => refreshViewport(), 40);
         }
       }
@@ -1892,6 +1939,10 @@ void main() {
           if (viewportTimerRef.current) {
             window.clearTimeout(viewportTimerRef.current);
             viewportTimerRef.current = 0;
+          }
+          if (viewportFlushTimerRef.current) {
+            window.clearTimeout(viewportFlushTimerRef.current);
+            viewportFlushTimerRef.current = 0;
           }
         };
       }, []);
