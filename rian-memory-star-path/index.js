@@ -218,6 +218,7 @@ export const inject = ['tools', 'systemPrompt', 'agents', 'sessions', 'workspace
 export function apply(ctx) {
   let dataDir = '';
   let mapsDir = '';
+  let metaDir = '';
   let backupsDir = '';
   let indexPath = '';
   let bindingsPath = '';
@@ -323,6 +324,19 @@ export function apply(ctx) {
     return path.join(mapsDir, `${mapId}.json`);
   }
 
+  function mapMetaPath(mapId) {
+    return path.join(metaDir, `${mapId}.json`);
+  }
+
+  async function writeMapMeta(mapId, data) {
+    const stats = mapStatsOf(data);
+    await writeJsonAtomic(
+      mapMetaPath(mapId),
+      { mapId, savedAt: nowIso(), stats },
+      { pretty: false },
+    );
+  }
+
   function mapStatsOf(data) {
     const stats = {
       stars: 0,
@@ -387,6 +401,7 @@ export function apply(ctx) {
       const data = maps.get(map.id);
       if (!data || data.unloaded || data.stars.length < LAZY_MIN_STARS) continue;
       const stats = mapStatsOf(data);
+      await writeMapMeta(map.id, data);
       maps.set(map.id, {
         map: data.map,
         stars: [],
@@ -417,6 +432,10 @@ export function apply(ctx) {
       return;
     }
     journalBytes.set(mapId, Buffer.byteLength(raw));
+    applyJournalText(data, raw);
+  }
+
+  function applyJournalText(data, raw) {
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       let record;
@@ -426,7 +445,7 @@ export function apply(ctx) {
         continue;
       }
       if (record?.op === 'upsert' && record.star?.id) {
-        const star = { ...record.star, mapId };
+        const star = { ...record.star, mapId: data.map?.id || record.star.mapId };
         const position = data.stars.findIndex((item) => item.id === star.id);
         if (position >= 0) data.stars[position] = star;
         else data.stars.push(star);
@@ -468,13 +487,17 @@ export function apply(ctx) {
         }
       }
     }
+    return data;
   }
 
   async function createAutoBackup() {
     if (settings.autoBackup === false) return;
     try {
       await fs.mkdir(backupsDir, { recursive: true });
-      const stars = [...maps.values()].reduce((sum, data) => sum + data.stars.length, 0);
+      const stars = [...maps.values()].reduce(
+        (sum, data) => sum + (data.unloaded ? data.stats?.stars || 0 : data.stars.length),
+        0,
+      );
       const edges = [...maps.values()].reduce((sum, data) => sum + data.edges.length, 0);
       const history = [...maps.values()].reduce(
         (sum, data) =>
@@ -489,12 +512,17 @@ export function apply(ctx) {
             schemaVersion: 1,
             kind: 'auto-backup',
             exportedAt: nowIso(),
-            maps: index.maps.map((map) => ({
-              id: map.id,
-              name: map.name,
-              kind: map.kind,
-              starCount: maps.get(map.id)?.stars.length || 0,
-            })),
+            maps: index.maps.map((map) => {
+              const data = maps.get(map.id);
+              return {
+                id: map.id,
+                name: map.name,
+                kind: map.kind,
+                starCount: data?.unloaded
+                  ? data.stats?.stars || 0
+                  : data?.stars.length || 0,
+              };
+            }),
             counts: {
               maps: index.maps.length,
               stars,
@@ -509,6 +537,16 @@ export function apply(ctx) {
         'bindings.json': JSON.stringify(Object.fromEntries(bindings), null, 2),
       };
       for (const data of maps.values()) {
+        if (data.unloaded) {
+          try {
+            files[`maps/${data.map.id}.json`] = await fs.readFile(mapPath(data.map.id), 'utf8');
+            const journal = await fs.readFile(journalPath(data.map.id), 'utf8').catch(() => '');
+            if (journal) files[`journals/${data.map.id}.ndjson`] = journal;
+          } catch {
+            // keep other maps in the backup even if one snapshot is unreadable
+          }
+          continue;
+        }
         files[`maps/${data.map.id}.json`] = JSON.stringify(data);
       }
       const archive = zipSync(files);
@@ -578,6 +616,7 @@ export function apply(ctx) {
       const data = maps.get(mapId);
       if (!data || data.unloaded) return undefined;
       await writeJsonAtomic(mapPath(mapId), data, { pretty: false });
+      await writeMapMeta(mapId, data);
       await fs.unlink(journalPath(mapId)).catch(() => {});
       journalBytes.delete(mapId);
       return undefined;
@@ -1061,6 +1100,7 @@ export function apply(ctx) {
     }
     dataDir = path.join(profileRoot, 'plugin-data', PLUGIN_ID);
     mapsDir = path.join(dataDir, 'maps');
+    metaDir = path.join(dataDir, 'meta');
     backupsDir = path.join(dataDir, 'backups');
     indexPath = path.join(dataDir, 'index.json');
     bindingsPath = path.join(dataDir, 'bindings.json');
@@ -1083,6 +1123,7 @@ export function apply(ctx) {
       }
     }
     await fs.mkdir(mapsDir, { recursive: true });
+    await fs.mkdir(metaDir, { recursive: true });
     await fs.mkdir(backupsDir, { recursive: true });
     try {
       const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8'));
@@ -1099,9 +1140,44 @@ export function apply(ctx) {
       await persistIndex();
       await persistMap(publicMap.id);
     }
+    let bootBindings = {};
+    try {
+      bootBindings = JSON.parse(await fs.readFile(bindingsPath, 'utf8'));
+    } catch {
+      // no bindings yet
+    }
+    let bootSettings = { ...DEFAULT_SETTINGS };
+    try {
+      bootSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(await fs.readFile(settingsPath, 'utf8')) };
+    } catch {
+      // defaults
+    }
+    const bootKeep = new Set([index.publicMapId, ...Object.values(bootBindings)]);
     await Promise.all(
       index.maps.map(async (map) => {
         if (maps.has(map.id)) return;
+        if (bootSettings.lazyMaps !== false && !bootKeep.has(map.id)) {
+          try {
+            const [meta, metaStat, mapStat] = await Promise.all([
+              fs.readFile(mapMetaPath(map.id), 'utf8').then((raw) => JSON.parse(raw)),
+              fs.stat(mapMetaPath(map.id)),
+              fs.stat(mapPath(map.id)),
+            ]);
+            if (meta?.stats && mapStat.mtimeMs <= metaStat.mtimeMs) {
+              maps.set(map.id, {
+                map,
+                stars: [],
+                edges: [],
+                constellations: [],
+                unloaded: true,
+                stats: meta.stats,
+              });
+              return;
+            }
+          } catch {
+            // no usable sidecar yet: load the map once
+          }
+        }
         try {
           maps.set(map.id, JSON.parse(await fs.readFile(mapPath(map.id), 'utf8')));
         } catch {
@@ -1112,7 +1188,7 @@ export function apply(ctx) {
     await Promise.all(
       index.maps.map(async (map) => {
         const data = maps.get(map.id);
-        if (data) await replayMapJournal(map.id, data);
+        if (data && !data.unloaded) await replayMapJournal(map.id, data);
       }),
     );
     try {
@@ -3202,6 +3278,7 @@ export function apply(ctx) {
             if (bindingsChanged) await persistBindings();
             await fs.unlink(mapPath(id)).catch(() => {});
             await fs.unlink(journalPath(id)).catch(() => {});
+            await fs.unlink(mapMetaPath(id)).catch(() => {});
             journalBytes.delete(id);
             indexCache.delete(id);
             dirtyIndex.delete(id);
@@ -3578,9 +3655,20 @@ export function apply(ctx) {
               return;
             }
             const entries = [];
+            const journalFiles = new Map();
+            for (const [name, content] of files) {
+              if (name.startsWith('journals/') && name.endsWith('.ndjson')) {
+                journalFiles.set(name, content.toString('utf8'));
+              }
+            }
             for (const [name, content] of files) {
               if (name.startsWith('maps/') && name.endsWith('.json')) {
-                entries.push(JSON.parse(content.toString('utf8')));
+                const data = JSON.parse(content.toString('utf8'));
+                const mapId = data?.map?.id || name.slice(5, -5);
+                const journal =
+                  journalFiles.get(`journals/${mapId}.ndjson`) ||
+                  journalFiles.get(`journals/${name.slice(5)}.ndjson`);
+                entries.push(journal ? applyJournalText(data, journal) : data);
               }
             }
             if (!entries.length) {
