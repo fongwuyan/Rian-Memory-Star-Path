@@ -59,13 +59,13 @@ async function main() {
   const oldStar = await createStar(
     map.id,
     `回归-旧-${stamp}`,
-    '包管理器使用 npm。',
+    '构建依赖安装使用 npm。',
     ['回归'],
   );
   const newStar = await createStar(
     map.id,
     `回归-新-${stamp}`,
-    '包管理器改用 pnpm，不再使用 npm。',
+    '发布流程迁移到 pnpm。',
     ['回归'],
   );
   const third = await createStar(map.id, `回归-三-${stamp}`, '回归测试第三条。', ['回归']);

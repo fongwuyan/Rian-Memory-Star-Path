@@ -7,6 +7,7 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 手动新建与模型保存统一到 `upsertStarToMap`：同样的相似合并、related/contradicts 边、history 和 journal。
 - 导入默认重新执行敏感内容与指令注入过滤，`privacy=allow` 才允许可信恢复。
 - 星座建议改为 `constellation.upsert/delete` journal，不再整图重写。
 - 边写入改为 journal 增量（`edge.upsert` / `edge.delete`），不再为一条关系重写整图。

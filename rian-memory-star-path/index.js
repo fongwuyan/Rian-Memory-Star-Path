@@ -1931,6 +1931,130 @@ export function apply(ctx) {
     }
   }
 
+  async function upsertStarToMap(mapId, input, sourceKind = 'model', options = {}) {
+    const title = String(input.title ?? '').trim();
+    const fact = String(input.fact ?? '').trim();
+    if (!title) throw new Error('title is required');
+    if (!fact) throw new Error('fact is required');
+    if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
+    if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
+    if (charCount(input.reason ?? '') > 120) throw new Error('reason must be at most 120 characters');
+    if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
+    const actor = sourceKind === 'manual' ? 'user' : 'model';
+    const candidates = similarStars(mapId, title, fact);
+    const best = candidates[0];
+    if (best && best.similarity > 0.8) {
+      const existing = best.star;
+      const before = {
+        title: existing.title,
+        fact: existing.fact,
+        reason: existing.reason,
+        condition: existing.condition,
+        tags: existing.tags,
+        refs: existing.refs,
+        confidence: existing.confidence,
+        status: existing.status,
+      };
+      existing.title = title || existing.title;
+      existing.fact = fact || existing.fact;
+      if (input.reason) existing.reason = String(input.reason).trim();
+      if (input.condition) existing.condition = String(input.condition).trim();
+      existing.tags = [
+        ...new Set([
+          ...(existing.tags || []),
+          ...(Array.isArray(input.tags) ? input.tags : []),
+        ]),
+      ].slice(0, 5);
+      existing.refs = [
+        ...new Set([
+          ...(existing.refs || []),
+          ...(Array.isArray(input.refs) ? input.refs : []),
+        ]),
+      ].slice(0, 5);
+      existing.confidence = Math.max(
+        Number(existing.confidence || 0),
+        Number(input.confidence ?? 0),
+      );
+      existing.mergedFrom = Array.isArray(existing.mergedFrom) ? existing.mergedFrom : [];
+      existing.mergedFrom.push({
+        title: title || existing.title,
+        fact: fact || existing.fact,
+        at: nowIso(),
+        source: sourceKind,
+      });
+      if (existing.mergedFrom.length > 10) existing.mergedFrom = existing.mergedFrom.slice(-10);
+      if (
+        existing.status === 'pending' &&
+        maps.get(mapId)?.map.kind !== 'public' &&
+        existing.confidence >= Number(settings.directActiveConfidence ?? 0.85)
+      ) {
+        existing.status = 'active';
+      }
+      existing.updatedAt = nowIso();
+      existing.version = Number(existing.version || 1) + 1;
+      recordStarHistory(
+        existing,
+        actor,
+        diffFields(before, existing, [
+          'title',
+          'fact',
+          'reason',
+          'condition',
+          'tags',
+          'refs',
+          'confidence',
+          'status',
+        ]),
+      );
+      invalidateIndex(existing.mapId, existing.id);
+      scheduleMapSave(existing.mapId, existing.id);
+      metrics.saves += 1;
+      metrics.lastSaveAt = nowIso();
+      return { status: 'merged', star: existing, merged: true };
+    }
+    const star = createStar(input, mapId, sourceKind, options.sessionId);
+    const newEdges = [];
+    if (best && best.similarity > 0.6) {
+      const edge = {
+        id: uid('ed'),
+        from: star.id,
+        to: best.star.id,
+        relation: 'related',
+        createdBy: actor,
+        createdAt: nowIso(),
+      };
+      maps.get(mapId).edges.push(edge);
+      newEdges.push(edge);
+    }
+    if (
+      best &&
+      best.similarity > 0.45 &&
+      /不要|改用|不是|停止|换成|instead|switch/i.test(String(input.fact ?? ''))
+    ) {
+      if (!best.star.disputed) {
+        best.star.disputed = true;
+        best.star.version = Number(best.star.version || 1) + 1;
+        recordStarHistory(best.star, actor, [{ field: 'disputed', from: false, to: true }]);
+        scheduleMapSave(mapId, best.star.id);
+      }
+      invalidateIndex(mapId, best.star.id);
+      const edge = {
+        id: uid('ed'),
+        from: star.id,
+        to: best.star.id,
+        relation: 'contradicts',
+        createdBy: actor,
+        createdAt: nowIso(),
+      };
+      maps.get(mapId).edges.push(edge);
+      newEdges.push(edge);
+    }
+    if (newEdges.length) await persistEdgeDelta(mapId, newEdges);
+    metrics.saves += 1;
+    metrics.lastSaveAt = nowIso();
+    return { status: star.status, star, merged: false };
+  }
+
   async function saveStarForAgent(agent, args) {
     if (isSubagent(agent)) throw new Error('subagents cannot write memories');
     if (isSessionMuted(agent)) throw new Error('Memory is disabled for this session.');
@@ -1963,108 +2087,17 @@ export function apply(ctx) {
     if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
       throw new Error('Memory is disabled for this workspace.');
     }
-    const candidates = similarStars(mapId, title, fact);
-    const best = candidates[0];
-    if (best && best.similarity > 0.8) {
-      const existing = best.star;
-      const before = {
-        title: existing.title,
-        fact: existing.fact,
-        reason: existing.reason,
-        condition: existing.condition,
-        tags: existing.tags,
-        refs: existing.refs,
-        confidence: existing.confidence,
-        status: existing.status,
-      };
-      existing.title = title || existing.title;
-      existing.fact = fact || existing.fact;
-      if (input.reason) existing.reason = String(input.reason).trim();
-      if (input.condition) existing.condition = String(input.condition).trim();
-      existing.tags = [...new Set([...(existing.tags || []), ...(Array.isArray(input.tags) ? input.tags : [])])].slice(0, 5);
-      existing.refs = [...new Set([...(existing.refs || []), ...(Array.isArray(input.refs) ? input.refs : [])])].slice(0, 5);
-      existing.confidence = Math.max(Number(existing.confidence || 0), Number(input.confidence ?? 0));
-      existing.mergedFrom = Array.isArray(existing.mergedFrom) ? existing.mergedFrom : [];
-      existing.mergedFrom.push({
-        title: title || existing.title,
-        fact: fact || existing.fact,
-        at: nowIso(),
-        source: 'model',
-      });
-      if (existing.mergedFrom.length > 10) existing.mergedFrom = existing.mergedFrom.slice(-10);
-      if (existing.status === 'pending' && maps.get(mapId)?.map.kind !== 'public' && existing.confidence >= Number(settings.directActiveConfidence ?? 0.85)) {
-        existing.status = 'active';
-      }
-      existing.updatedAt = nowIso();
-      existing.version = Number(existing.version || 1) + 1;
-      recordStarHistory(
-        existing,
-        'model',
-        diffFields(before, existing, [
-          'title',
-          'fact',
-          'reason',
-          'condition',
-          'tags',
-          'refs',
-          'confidence',
-          'status',
-        ]),
-      );
-      invalidateIndex(existing.mapId, existing.id);
-      scheduleMapSave(existing.mapId, existing.id);
-      metrics.saves += 1;
-      metrics.lastSaveAt = nowIso();
-      return {
-        status: 'merged',
-        id: existing.id,
-        message: 'Merged into an existing memory.',
-        map: maps.get(mapId)?.map.name || '',
-        mapKind: maps.get(mapId)?.map.kind || 'project',
-      };
-    }
-    const star = createStar(input, mapId, 'session', agent?.id);
-    const newEdges = [];
-    if (best && best.similarity > 0.6) {
-      const edge = {
-        id: uid('ed'),
-        from: star.id,
-        to: best.star.id,
-        relation: 'related',
-        createdBy: 'model',
-        createdAt: nowIso(),
-      };
-      maps.get(mapId).edges.push(edge);
-      newEdges.push(edge);
-    }
-    if (best && best.similarity > 0.45 && /不要|改用|不是|停止|换成|instead|switch/i.test(String(input.fact ?? ''))) {
-      if (!best.star.disputed) {
-        best.star.disputed = true;
-        best.star.version = Number(best.star.version || 1) + 1;
-        recordStarHistory(best.star, 'model', [
-          { field: 'disputed', from: false, to: true },
-        ]);
-        scheduleMapSave(mapId, best.star.id);
-      }
-      invalidateIndex(mapId, best.star.id);
-      const edge = {
-        id: uid('ed'),
-        from: star.id,
-        to: best.star.id,
-        relation: 'contradicts',
-        createdBy: 'model',
-        createdAt: nowIso(),
-      };
-      maps.get(mapId).edges.push(edge);
-      newEdges.push(edge);
-    }
-    if (newEdges.length) await persistEdgeDelta(mapId, newEdges);
-    metrics.saves += 1;
-    metrics.lastSaveAt = nowIso();
+    const result = await upsertStarToMap(mapId, input, 'session', {
+      sessionId: agent?.id,
+    });
     return {
-      status: star.status,
-      id: star.id,
-      message: star.status === 'pending' ? 'Saved to the nebula for confirmation.' : 'Saved.',
+      status: result.status,
+      id: result.star.id,
+      message: result.merged
+        ? 'Merged into an existing memory.'
+        : result.star.status === 'pending'
+          ? 'Saved to the nebula for confirmation.'
+          : 'Saved.',
       map: maps.get(mapId)?.map.name || '',
       mapKind: maps.get(mapId)?.map.kind || 'project',
     };
@@ -2543,9 +2576,13 @@ export function apply(ctx) {
               sendJson(res, 400, { error: 'Instruction-like content detected; not saved.' });
               return;
             }
-            const star = createStar(body, mapId, 'manual');
-            await persistStarDelta(mapId, new Set([star.id]));
-            sendJson(res, 200, { star });
+            const result = await upsertStarToMap(mapId, body, 'manual');
+            await persistStarDelta(mapId, new Set([result.star.id]));
+            sendJson(res, 200, {
+              star: result.star,
+              status: result.status,
+              merged: Boolean(result.merged),
+            });
             return;
           }
 
