@@ -99,7 +99,8 @@ C:\Users\<user>\.dsh\profiles\desktop\plugin-data\rian-memory-star-path\
 ```text
 index.json                星图索引
 bindings.json             会话 -> 项目图绑定
-settings.json             插件设置
+settings.json             插件设置（含 journalFsync）
+plugin.lock               profile 独占锁，关闭时释放
 maps/<mapId>.json         单图数据（星、边、星座、星尘）
 backups/backup-*.zip      启动自动备份，最近 5 份
 ```

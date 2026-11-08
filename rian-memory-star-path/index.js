@@ -63,6 +63,7 @@ const DEFAULT_SETTINGS = {
   noMemorySessions: [],
   exportReminder: true,
   autoBackup: true,
+  journalFsync: false,
 };
 
 const CREDENTIAL_RE =
@@ -214,6 +215,9 @@ export function apply(ctx) {
   let indexPath = '';
   let bindingsPath = '';
   let settingsPath = '';
+  let lockPath = '';
+  let lockToken = '';
+  let lockOwned = false;
   const legacyDataDir = path.join(os.homedir(), '.dsh', 'plugin-data', PLUGIN_ID);
 
   const index = { version: 1, publicMapId: '', maps: [] };
@@ -276,8 +280,9 @@ export function apply(ctx) {
         }
       }
     })
-    .catch((error) => {
+    .catch(async (error) => {
       bootError = error;
+      await releaseProfileLock();
       console.error('[memory-star] boot failed', error);
     });
 
@@ -711,12 +716,26 @@ export function apply(ctx) {
     );
   }
 
+  async function appendJournalFile(file, payload) {
+    if (!settings.journalFsync) {
+      await fs.appendFile(file, payload, 'utf8');
+      return;
+    }
+    const handle = await fs.open(file, 'a');
+    try {
+      await handle.writeFile(payload, 'utf8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+
   function appendJournalRecords(mapId, records) {
     if (!mapId || !records.length) return Promise.resolve();
     pageCache.delete(mapId);
     return enqueueWrite(`map:${mapId}`, async () => {
       const payload = records.map((record) => `${JSON.stringify(record)}\n`).join('');
-      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      await appendJournalFile(journalPath(mapId), payload);
       const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
       journalBytes.set(mapId, nextBytes);
       metrics.journalAppends += 1;
@@ -769,7 +788,7 @@ export function apply(ctx) {
         );
       }
       const payload = lines.join('');
-      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      await appendJournalFile(journalPath(mapId), payload);
       const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
       journalBytes.set(mapId, nextBytes);
       metrics.journalAppends += 1;
@@ -829,7 +848,7 @@ export function apply(ctx) {
       }
       if (!lines.length) return;
       const payload = lines.join('');
-      await fs.appendFile(journalPath(mapId), payload, 'utf8');
+      await appendJournalFile(journalPath(mapId), payload);
       const nextBytes = (journalBytes.get(mapId) || 0) + Buffer.byteLength(payload);
       journalBytes.set(mapId, nextBytes);
       metrics.statsJournalAppends += 1;
@@ -842,6 +861,68 @@ export function apply(ctx) {
 
   function scheduleBindings() {
     persistBindings().catch((error) => console.error('[memory-star] save bindings failed', error));
+  }
+
+  async function acquireProfileLock() {
+    lockToken = uid('lock');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const handle = await fs.open(lockPath, 'wx');
+        await handle.writeFile(
+          JSON.stringify({ pid: process.pid, token: lockToken, startedAt: nowIso() }),
+          'utf8',
+        );
+        await handle.close();
+        lockOwned = true;
+        return;
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+        let existing = null;
+        try {
+          existing = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+        } catch {
+          // corrupt lock: replace it
+        }
+        let alive = false;
+        if (existing?.pid) {
+          if (existing.pid === process.pid) {
+            const handle = await fs.open(lockPath, 'w');
+            await handle.writeFile(
+              JSON.stringify({ pid: process.pid, token: lockToken, startedAt: nowIso() }),
+              'utf8',
+            );
+            await handle.close();
+            lockOwned = true;
+            return;
+          }
+          try {
+            process.kill(existing.pid, 0);
+            alive = true;
+          } catch (probeError) {
+            alive = probeError?.code === 'EPERM';
+          }
+        }
+        if (alive) {
+          throw new Error(
+            `Memory profile is already in use by process ${existing.pid}. Close the other DSH window first.`,
+          );
+        }
+        await fs.unlink(lockPath).catch(() => {});
+      }
+    }
+    throw new Error('Could not acquire the memory profile lock.');
+  }
+
+  async function releaseProfileLock() {
+    if (!lockOwned || !lockPath) return;
+    lockOwned = false;
+    try {
+      const existing = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+      if (existing?.token !== lockToken) return;
+      await fs.unlink(lockPath);
+    } catch {
+      // already released or replaced
+    }
   }
 
   async function boot() {
@@ -869,6 +950,8 @@ export function apply(ctx) {
     settingsPath = path.join(dataDir, 'settings.json');
 
     await fs.mkdir(dataDir, { recursive: true });
+    lockPath = path.join(dataDir, 'plugin.lock');
+    await acquireProfileLock();
     if (path.resolve(dataDir) !== path.resolve(legacyDataDir)) {
       try {
         await fs.access(path.join(dataDir, 'index.json'));
@@ -3200,6 +3283,6 @@ export function apply(ctx) {
     }
     writes.push(persistIndex().catch(() => {}));
     writes.push(persistBindings().catch(() => {}));
-    return Promise.allSettled(writes);
+    return Promise.allSettled(writes).then(() => releaseProfileLock());
   });
 }

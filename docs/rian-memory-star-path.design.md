@@ -789,6 +789,7 @@ weight = clamp(
 
 - 地图全量快照 + append-only journal；
 - 单星 upsert/delete、边/星座 upsert/delete、召回 stats 追加到 `*.journal.ndjson`，启动时回放；
+- 设置 `journalFsync: true` 时 journal 追加后 fsync；profile 级 `plugin.lock` 阻止多进程同时写；
 - 手动 `POST /stars` 与模型 `memory_save` 共用 `upsertStarToMap`，同样做相似合并、连边和 history；
 - journal 超过 8MB 或插件卸载时压缩回全量快照；
 - 召回统计追加 `stats` 记录，30 秒批量保存，避免每 turn 重写整图；
@@ -837,6 +838,7 @@ weight = clamp(
   maps/<mapId>.idx.json       # BM25 索引，可重建，不导出
   history/<mapId>.jsonl       # 版本差异，按图分片
   backups/auto-<date>.zip     # 迁移 / 导入前自动备份
+  plugin.lock                 # profile 独占锁，退出时释放
 ```
 
 默认路径：`<DSH_PROFILE_DIR>/plugin-data/rian-memory-star-path/`。
