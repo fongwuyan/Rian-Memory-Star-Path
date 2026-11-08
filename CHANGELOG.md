@@ -14,7 +14,7 @@
 - dirty-star 精确索引：按变更星更新 docs / postings / df，100k 单次同步约 8–20ms。
 - 单星增删改改为 append-only journal，避免每次重写 10 万星整图；启动回放，8MB 自动压缩。
 - 召回统计改为 stats journal 追加，30 秒批量落盘，不再触发整图重写。
-- 启动约 2.5s 后在后台按 2500 星分片预热倒排索引；打开大图也会触发，10 万星图预热完成后检索约 2–7ms。
+- 启动时先分片预热倒排索引再开放记忆 API；`prewarmOnBoot=false` 可关闭，打开大图仍会触发预热点。
 - 图关系召回：直接命中不足时，沿 related / supports / derived / part-of 扩展邻居。
 - 全局搜索支持 `graph=1` 图扩展：直接命中不足时补入相关邻居。
 - 新增 journal 与图关系召回专项测试脚本。

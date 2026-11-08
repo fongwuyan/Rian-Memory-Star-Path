@@ -259,14 +259,17 @@ export function apply(ctx) {
 
   const ready = boot()
     .then(() => createAutoBackup())
-    .then(() => {
-      const timer = setTimeout(() => {
-        for (const map of index.maps) {
-          const data = maps.get(map.id);
-          if (data && data.stars.length >= 2000) prewarmIndex(map.id);
+    .then(async () => {
+      if (settings.prewarmOnBoot === false) return;
+      for (const map of index.maps) {
+        const data = maps.get(map.id);
+        if (!data || data.stars.length < 2000) continue;
+        try {
+          await prewarmIndex(map.id);
+        } catch (error) {
+          console.error('[memory-star] index prewarm failed', error);
         }
-      }, 2500);
-      timer.unref?.();
+      }
     })
     .catch((error) => {
       bootError = error;
