@@ -996,6 +996,16 @@ void main() {
         surface.lineTo(x - 3, y + 16);
         surface.stroke();
       }
+      if (positions.length > 2000) {
+        if (emptyText) {
+          surface.fillStyle = 'rgba(232,236,255,0.62)';
+          surface.font = '14px system-ui, sans-serif';
+          surface.textAlign = 'center';
+          surface.fillText(emptyText, width / 2, height / 2);
+          surface.textAlign = 'start';
+        }
+        return;
+      }
       const byId = new Map(positions.map((item) => [item.star.id, item]));
       for (const [index, constellation] of (constellations || []).entries()) {
         const members = (constellation.starIds || [])
@@ -1457,8 +1467,8 @@ void main() {
               dpr,
               positions,
               edgePairs,
-              pan2dRef.current.x,
-              pan2dRef.current.y,
+              0,
+              0,
             );
             const displayPositions = projected || positions;
             positionsRef.current = displayPositions;
@@ -1473,6 +1483,7 @@ void main() {
               emptyText,
               data?.constellations || [],
             );
+            applyPanTransform();
           };
           drawRef.current = renderFrame;
           renderFrame();
@@ -1606,8 +1617,15 @@ void main() {
         glRef.current.renderer?.setAutoRotate?.(autoRotate);
       }, [autoRotate, settings?.viewMode]);
 
+      function applyPanTransform() {
+        const transform = `translate3d(${pan2dRef.current.x}px, ${pan2dRef.current.y}px, 0)`;
+        if (canvasRef.current) canvasRef.current.style.transform = transform;
+        if (labelRef.current) labelRef.current.style.transform = transform;
+      }
+
       React.useEffect(() => {
         pan2dRef.current = { x: 0, y: 0 };
+        applyPanTransform();
       }, [activeId]);
 
       function handlePointerDown(event) {
@@ -1666,7 +1684,7 @@ void main() {
             x: pan2dRef.current.x + dx,
             y: pan2dRef.current.y + dy,
           };
-          drawRef.current?.();
+          applyPanTransform();
           return;
         }
         const renderer = glRef.current.renderer;
@@ -2336,6 +2354,7 @@ void main() {
               zIndex: 1,
               cursor: 'grab',
               background: 'transparent',
+              transform: 'translate3d(0, 0, 0)',
               outline: 'none',
             },
           }),
@@ -2350,6 +2369,7 @@ void main() {
               height: '100%',
               pointerEvents: 'none',
               zIndex: 2,
+              transform: 'translate3d(0, 0, 0)',
             },
           }),
           h('div', { className: 'ms-vignette', 'aria-hidden': true }),
@@ -2468,7 +2488,7 @@ void main() {
                     type: 'button',
                     onClick: () => {
                       pan2dRef.current = { x: 0, y: 0 };
-                      drawRef.current?.();
+                      applyPanTransform();
                     },
                     style: {
                       padding: '4px 10px',
