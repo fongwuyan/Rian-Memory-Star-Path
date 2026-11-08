@@ -59,6 +59,7 @@ const DEFAULT_SETTINGS = {
   privacyMode: 'standard',
   customSensitiveWords: [],
   privacyIncognito: false,
+  privacyOutputRedaction: true,
   noMemoryWorkspaces: [],
   noMemorySessions: [],
   exportReminder: true,
@@ -70,6 +71,8 @@ const CREDENTIAL_RE =
   /(?:\b(?:password|passwd|secret|api[\s_-]?key|access[\s_-]?key|private[\s_-]?key)\b\s*[:=]\s*\S+|(?:密码|口令|密钥|私钥|令牌|凭据)\s*[:=：是]\s*\S+|\bBearer\s+[A-Za-z0-9._-]{16,})/i;
 const PERSONAL_RE =
   /\b1[3-9]\d{9}\b|\b[\w.+-]+@[\w-]+\.[A-Za-z]{2,}\b|\b\d{17}[\dXx]\b/;
+const CREDENTIAL_REDACT_RE = new RegExp(CREDENTIAL_RE.source, 'gi');
+const PERSONAL_REDACT_RE = new RegExp(PERSONAL_RE.source, 'g');
 
 function detectSensitive(text, mode = 'standard', customWords = []) {
   const value = String(text || '');
@@ -1676,15 +1679,30 @@ export function apply(ctx) {
     return searchAcrossMaps(accessibleMapIds(mapId), query, limit);
   }
 
+  function redactOutputText(value) {
+    if (settings.privacyOutputRedaction === false) return value;
+    let text = String(value ?? '');
+    if (!text) return text;
+    text = text.replace(CREDENTIAL_REDACT_RE, '[redacted]');
+    text = text.replace(PERSONAL_REDACT_RE, '[redacted]');
+    for (const word of settings.customSensitiveWords || []) {
+      const trimmed = String(word || '').trim();
+      if (!trimmed) continue;
+      const safe = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(safe, 'gi'), '[redacted]');
+    }
+    return text;
+  }
+
   function compactHit(hit) {
     return {
       id: hit.star.id,
-      title: hit.star.title,
-      fact: hit.star.fact,
-      reason: hit.star.reason,
-      condition: hit.star.condition,
+      title: redactOutputText(hit.star.title),
+      fact: redactOutputText(hit.star.fact),
+      reason: redactOutputText(hit.star.reason),
+      condition: redactOutputText(hit.star.condition),
       type: hit.star.type,
-      tags: hit.star.tags || [],
+      tags: (hit.star.tags || []).map(redactOutputText),
       map: hit.map.name,
       mapId: hit.map.id,
       mapKind: hit.map.kind,
@@ -1694,8 +1712,8 @@ export function apply(ctx) {
   }
 
   function starLine(star, map) {
-    const condition = star.condition ? `（条件：${star.condition}）` : '';
-    return `〔${map.name}〕${TYPE_LABEL[star.type] || star.type}：${star.title}。${star.fact}${condition}`;
+    const condition = star.condition ? `（条件：${redactOutputText(star.condition)}）` : '';
+    return `〔${map.name}〕${TYPE_LABEL[star.type] || star.type}：${redactOutputText(star.title)}。${redactOutputText(star.fact)}${condition}`;
   }
 
   function isRecallSuppressed(sessionId, starId, turn) {

@@ -501,6 +501,7 @@ conversation, follow the current conversation and mention the conflict.
 
 - 非固定星 3 回合内不重复注入；固定星不受限；
 - 召回统一 `retrieveHits`：原始候选先图扩展，再做重复抑制；pinned 保留最低召回位；
+- 输出统一脱敏：凭据、手机号、邮箱、自定义敏感词替换为 `[redacted]`，由 `privacyOutputRedaction` 控制；
 - 检索异常、存储异常、索引损坏都静默降级为空上下文；
 - 任何情况下不阻塞模型请求。
 

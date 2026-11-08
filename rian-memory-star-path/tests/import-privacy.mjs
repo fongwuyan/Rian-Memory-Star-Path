@@ -74,6 +74,15 @@ try {
   assert.equal(allowed.imported.blockedSensitive, 0);
   assert.equal(allowed.imported.blockedInstruction, 0);
 
+  const search = await request(`/search?q=${encodeURIComponent('敏感导入')}&limit=10`);
+  const sensitiveHit = (search.stars || []).find((star) => star.title === '敏感导入');
+  assert.ok(sensitiveHit, 'allowed import should remain searchable');
+  assert.ok(
+    String(sensitiveHit.fact).includes('[redacted]') &&
+      !String(sensitiveHit.fact).includes('hunter2'),
+    'search output should redact credentials',
+  );
+
   const maps = await request('/maps');
   for (const map of maps.maps || []) {
     if (map.name === firstName || map.name === `${firstName}（导入）` || map.name === secondName || map.name === `${secondName}（导入）`) {
