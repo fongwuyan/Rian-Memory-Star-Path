@@ -4516,6 +4516,28 @@ void main() {
         ),
         h('h3', { style: { margin: '18px 0 10px', fontSize: '13px', opacity: 0.8 } }, '记忆'),
         field(
+          '无限制记忆',
+          h(
+            'div',
+            { style: { display: 'grid', gap: '4px' } },
+            h(
+              'label',
+              { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' } },
+              h('input', {
+                type: 'checkbox',
+                checked: Boolean(settings.unlimitedMemory),
+                onChange: (event) => update({ unlimitedMemory: event.target.checked }),
+              }),
+              '关闭写入长度、召回条数与注入预算限制',
+            ),
+            h(
+              'span',
+              { style: { fontSize: '11px', opacity: 0.5 } },
+              '隐私、敏感内容与暂停规则仍然生效；开启后可能一次注入大量记忆。',
+            ),
+          ),
+        ),
+        field(
           '每轮注入条数',
           h('input', {
             type: 'number',

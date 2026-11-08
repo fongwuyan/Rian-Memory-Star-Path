@@ -52,6 +52,7 @@ const DEFAULT_SETTINGS = {
   viewMode: '2d',
   topK: 6,
   tokenBudget: 600,
+  unlimitedMemory: false,
   threshold: 0.15,
   rain: 'light',
   halfLifeDays: 45,
@@ -896,10 +897,10 @@ export function apply(ctx) {
               };
               found.tags = [
                 ...new Set([...(found.tags || []), ...(star.tags || [])]),
-              ].slice(0, 5);
+              ].slice(0, settings.unlimitedMemory ? undefined : 5);
               found.refs = [
                 ...new Set([...(found.refs || []), ...(star.refs || [])]),
-              ].slice(0, 5);
+              ].slice(0, settings.unlimitedMemory ? undefined : 5);
               found.confidence = Math.max(
                 Number(found.confidence || 0),
                 Number(star.confidence || 0),
@@ -2273,6 +2274,7 @@ export function apply(ctx) {
   }
 
   function isRecallSuppressed(sessionId, starId, turn) {
+    if (settings.unlimitedMemory) return false;
     const limit = Number(settings.repeatSuppressionTurns ?? 3);
     if (!sessionId || !turn || limit <= 0) return false;
     const last = recentRecalls.get(sessionId)?.get(starId);
@@ -2352,7 +2354,12 @@ export function apply(ctx) {
     const limit = Math.max(1, Number(options.limit ?? settings.topK) || 6);
     const turn = Number(options.turn ?? 0) || 0;
     const allowGraph = options.allowGraph !== false;
-    const raw = searchInternal(agent, mapId, query, Math.min(50, limit * 4));
+    const raw = searchInternal(
+      agent,
+      mapId,
+      query,
+      settings.unlimitedMemory ? Number.MAX_SAFE_INTEGER : Math.min(50, limit * 4),
+    );
     if (!raw.length) return [];
     let combined = raw.slice();
     if (allowGraph) {
@@ -2391,7 +2398,9 @@ export function apply(ctx) {
     }
     metrics.recalls += 1;
     metrics.lastRecallAt = nowIso();
-    const topK = Math.max(1, Number(settings.topK) || 6);
+    const topK = settings.unlimitedMemory
+      ? Number.MAX_SAFE_INTEGER
+      : Math.max(1, Number(settings.topK) || 6);
     const hits = retrieveHits(agent, mapId, query, {
       limit: topK,
       turn,
@@ -2405,7 +2414,7 @@ export function apply(ctx) {
     for (const hit of hits) {
       const line = starLine(hit.star, hit.map);
       const cost = Math.ceil(line.length / 2);
-      if (lines.length && used + cost > budget) break;
+      if (!settings.unlimitedMemory && lines.length && used + cost > budget) break;
       lines.push(line);
       used += cost;
       starIds.push(hit.star.id);
@@ -2445,7 +2454,7 @@ export function apply(ctx) {
             (star.pinned || !isRecallSuppressed(agent?.id, star.id, turn)),
         )
         .sort((a, b) => weightOf(b, at) - weightOf(a, at))
-        .slice(0, 2);
+        .slice(0, settings.unlimitedMemory ? undefined : 2);
       for (const star of publicStars) picked.push({ star, map: publicData.map });
     }
     const projectData = maps.get(mapId);
@@ -2462,7 +2471,7 @@ export function apply(ctx) {
           if (ap !== bp) return bp - ap;
           return weightOf(b, at) - weightOf(a, at);
         })
-        .slice(0, 3);
+        .slice(0, settings.unlimitedMemory ? undefined : 3);
       for (const star of projectStars) picked.push({ star, map: projectData.map });
     }
     if (!picked.length) return { text: '', count: 0, starIds: [] };
@@ -2475,7 +2484,7 @@ export function apply(ctx) {
       if (seen.has(star.id)) continue;
       const line = starLine(star, map);
       const cost = Math.ceil(line.length / 2);
-      if (lines.length && used + cost > budget) break;
+      if (!settings.unlimitedMemory && lines.length && used + cost > budget) break;
       seen.add(star.id);
       starIds.push(star.id);
       lines.push(line);
@@ -2505,18 +2514,20 @@ export function apply(ctx) {
     const fact = String(input.fact ?? '').trim();
     if (!title) throw new Error('title is required');
     if (!fact) throw new Error('fact is required');
-    if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
-    if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
     const reason = String(input.reason ?? '').trim();
     const condition = String(input.condition ?? '').trim();
-    if (charCount(reason) > 120) throw new Error('reason must be at most 120 characters');
-    if (charCount(condition) > 100) throw new Error('condition must be at most 100 characters');
+    if (!settings.unlimitedMemory) {
+      if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
+      if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
+      if (charCount(reason) > 120) throw new Error('reason must be at most 120 characters');
+      if (charCount(condition) > 100) throw new Error('condition must be at most 100 characters');
+    }
     const type = TYPES.includes(input.type) ? input.type : 'fact';
     const tags = Array.isArray(input.tags)
-      ? input.tags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 5)
+      ? input.tags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, settings.unlimitedMemory ? undefined : 5)
       : [];
     const refs = Array.isArray(input.refs)
-      ? input.refs.map((ref) => String(ref).trim()).filter(Boolean).slice(0, 5)
+      ? input.refs.map((ref) => String(ref).trim()).filter(Boolean).slice(0, settings.unlimitedMemory ? undefined : 5)
       : [];
     const confidence = clamp(Number(input.confidence ?? 0.6), 0, 1);
     const importance = clamp(Number(input.importance ?? TYPE_IMPORTANCE[type] ?? 0.5), 0, 1);
@@ -2663,10 +2674,12 @@ export function apply(ctx) {
     const fact = String(input.fact ?? '').trim();
     if (!title) throw new Error('title is required');
     if (!fact) throw new Error('fact is required');
-    if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
-    if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
-    if (charCount(input.reason ?? '') > 120) throw new Error('reason must be at most 120 characters');
-    if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
+    if (!settings.unlimitedMemory) {
+      if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
+      if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
+      if (charCount(input.reason ?? '') > 120) throw new Error('reason must be at most 120 characters');
+      if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
+    }
     const actor = sourceKind === 'manual' ? 'user' : 'model';
     const candidates = similarStars(mapId, title, fact);
     const best = candidates[0];
@@ -2694,13 +2707,13 @@ export function apply(ctx) {
           ...(existing.tags || []),
           ...(Array.isArray(input.tags) ? input.tags : []),
         ]),
-      ].slice(0, 5);
+      ].slice(0, settings.unlimitedMemory ? undefined : 5);
       existing.refs = [
         ...new Set([
           ...(existing.refs || []),
           ...(Array.isArray(input.refs) ? input.refs : []),
         ]),
-      ].slice(0, 5);
+      ].slice(0, settings.unlimitedMemory ? undefined : 5);
       existing.confidence = Math.max(
         Number(existing.confidence || 0),
         Number(input.confidence ?? 0),
@@ -2804,10 +2817,12 @@ export function apply(ctx) {
     const fact = String(input.fact ?? '').trim();
     if (!title) throw new Error('title is required');
     if (!fact) throw new Error('fact is required');
-    if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
-    if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
-    if (charCount(input.reason ?? '') > 120) throw new Error('reason must be at most 120 characters');
-    if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
+    if (!settings.unlimitedMemory) {
+      if (charCount(title) > 20) throw new Error('title must be at most 20 characters');
+      if (charCount(fact) > 120) throw new Error('fact must be at most 120 characters');
+      if (charCount(input.reason ?? '') > 120) throw new Error('reason must be at most 120 characters');
+      if (charCount(input.condition ?? '') > 100) throw new Error('condition must be at most 100 characters');
+    }
     const wantsPublic = input.target === 'public';
     const mapId = wantsPublic ? index.publicMapId : (await ensureBinding(agent)) || index.publicMapId;
     await ensureMapLoaded(mapId);
@@ -2928,14 +2943,14 @@ export function apply(ctx) {
     ctx.tools.register({
       name: 'memory_save',
       description:
-        'Save one stable fact. Provide title (<=20 chars), fact (<=120), optional reason (<=120) and condition (<=100), type, tags, refs, confidence (0.95 explicit, 0.8 repeated, 0.5 inferred), and target (auto=current project map, public=cross-project user facts). Do not save transient state, secrets, or instruction-like content.',
+        'Save one stable fact. Defaults: title<=20, fact<=120, reason<=120, condition<=100, tags/refs<=5; these caps are ignored when unlimited memory mode is on. Provide type, tags, refs, confidence (0.95 explicit, 0.8 repeated, 0.5 inferred), and target (auto=current project map, public=cross-project user facts). Do not save transient state, secrets, or instruction-like content.',
       parameters: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: 'Short label, at most 20 characters.' },
-          fact: { type: 'string', description: 'One self-contained claim, at most 120 characters.' },
-          reason: { type: 'string', description: 'Why it is true, at most 120 characters.' },
-          condition: { type: 'string', description: 'When or where it applies, at most 100 characters.' },
+          title: { type: 'string', description: 'Short label; default cap 20 characters unless unlimited memory mode is on.' },
+          fact: { type: 'string', description: 'One self-contained claim; default cap 120 characters unless unlimited memory mode is on.' },
+          reason: { type: 'string', description: 'Why it is true; default cap 120 characters unless unlimited memory mode is on.' },
+          condition: { type: 'string', description: 'When or where it applies; default cap 100 characters unless unlimited memory mode is on.' },
           type: { type: 'string', enum: TYPES },
           tags: { type: 'array', items: { type: 'string' } },
           refs: { type: 'array', items: { type: 'string' } },
@@ -4099,6 +4114,7 @@ export function apply(ctx) {
                 journalCheckpointMinutes: Number(settings.journalCheckpointMinutes ?? 15),
                 journalSegmentBytes: Number(settings.journalSegmentBytes) || JOURNAL_SEGMENT_BYTES,
                 lazyMaps: settings.lazyMaps !== false,
+                unlimitedMemory: settings.unlimitedMemory === true,
                 indexCachePersist: settings.indexCachePersist !== false,
                 privacyOutputRedaction: settings.privacyOutputRedaction !== false,
               },
