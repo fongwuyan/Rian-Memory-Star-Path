@@ -152,6 +152,7 @@ rian-memory-star-path/
   tests/regression.mjs  回归脚本
   tests/journal.mjs     journal 写入专项
   tests/graph.mjs       图关系召回专项
+  tests/import-privacy.mjs  导入隐私过滤专项
   tests/generate-realistic-map.mjs  生成真实场景测试星图
 ```
 
@@ -164,6 +165,7 @@ node tests/regression.mjs
 node tests/graph.mjs
 $env:DSH_MEMORY_DATA_DIR="$env:USERPROFILE\.dsh\profiles\desktop\plugin-data\rian-memory-star-path"
 node tests/journal.mjs
+node tests/import-privacy.mjs
 ```
 
 重建真实场景测试图（会删除旧的 `测试星图 10w`）：

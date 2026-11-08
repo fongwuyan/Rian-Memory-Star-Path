@@ -489,12 +489,42 @@ export function apply(ctx) {
     };
   }
 
-  async function importMapEntries(entries, strategy = 'copy') {
+  function importedStarBlockReason(star) {
+    const probe = [
+      star?.title ?? '',
+      star?.fact ?? '',
+      star?.reason ?? '',
+      star?.condition ?? '',
+      Array.isArray(star?.tags) ? star.tags.join(' ') : '',
+      Array.isArray(star?.refs) ? star.refs.join(' ') : '',
+    ].join('\n');
+    if (
+      detectSensitive(probe, settings.privacyMode, settings.customSensitiveWords) ||
+      isSensitive(probe)
+    ) {
+      return 'sensitive';
+    }
+    if (isInstructionLike(probe)) return 'instruction';
+    return null;
+  }
+
+  async function importMapEntries(entries, strategy = 'copy', options = {}) {
     let importedMaps = 0;
     let importedStars = 0;
     let importedEdges = 0;
     let mergedMaps = 0;
     let mergedStars = 0;
+    let blockedSensitive = 0;
+    let blockedInstruction = 0;
+    const sanitize = options.sanitize !== false;
+    const filterStars = (stars) =>
+      (stars || []).filter((star) => {
+        if (!sanitize) return true;
+        const reason = importedStarBlockReason(star);
+        if (reason === 'sensitive') blockedSensitive += 1;
+        if (reason === 'instruction') blockedInstruction += 1;
+        return !reason;
+      });
     for (const entry of entries) {
       const sourceMap = entry?.map || {};
       const sourceName = String(sourceMap.name || '导入星图');
@@ -510,7 +540,7 @@ export function apply(ctx) {
             byKey.set(normalizeMergeKey(star.title, star.fact), star);
           }
           const starIdMap = new Map();
-          for (const star of entry.stars || []) {
+          for (const star of filterStars(entry.stars)) {
             const key = normalizeMergeKey(star.title, star.fact);
             const found = byKey.get(key);
             if (found) {
@@ -608,7 +638,7 @@ export function apply(ctx) {
       const suffix = strategy === 'merge' ? '' : '（导入）';
       const map = makeMap(`${sourceName}${suffix}`, 'project', null);
       const starIdMap = new Map();
-      const stars = (entry.stars || []).map((star) => {
+      const stars = filterStars(entry.stars).map((star) => {
         const id = uid('st');
         starIdMap.set(star.id, id);
         return {
@@ -648,6 +678,8 @@ export function apply(ctx) {
       edges: importedEdges,
       mergedMaps,
       mergedStars,
+      blockedSensitive,
+      blockedInstruction,
     };
   }
 
@@ -2994,7 +3026,8 @@ export function apply(ctx) {
               return;
             }
             const strategy = url.searchParams.get('strategy') === 'merge' ? 'merge' : 'copy';
-            const imported = await importMapEntries(body.maps, strategy);
+            const sanitize = url.searchParams.get('privacy') !== 'allow';
+            const imported = await importMapEntries(body.maps, strategy, { sanitize });
             sendJson(res, 200, { imported });
             return;
           }
@@ -3027,7 +3060,8 @@ export function apply(ctx) {
               return;
             }
             const strategy = url.searchParams.get('strategy') === 'merge' ? 'merge' : 'copy';
-            const imported = await importMapEntries(entries, strategy);
+            const sanitize = url.searchParams.get('privacy') !== 'allow';
+            const imported = await importMapEntries(entries, strategy, { sanitize });
             sendJson(res, 200, { imported });
             return;
           }
