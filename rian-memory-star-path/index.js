@@ -69,6 +69,7 @@ const DEFAULT_SETTINGS = {
   prewarmScope: 'bound',
   journalCheckpointMinutes: 15,
   lazyMaps: true,
+  indexCachePersist: false,
 };
 
 const CREDENTIAL_RE =
@@ -219,6 +220,7 @@ export function apply(ctx) {
   let dataDir = '';
   let mapsDir = '';
   let metaDir = '';
+  let indexCacheDir = '';
   let backupsDir = '';
   let indexPath = '';
   let bindingsPath = '';
@@ -256,6 +258,8 @@ export function apply(ctx) {
     indexRebuilds: 0,
     indexSyncs: 0,
     indexPrewarms: 0,
+    indexCacheHits: 0,
+    indexCacheWrites: 0,
     journalAppends: 0,
     statsJournalAppends: 0,
     journalCompactions: 0,
@@ -328,6 +332,10 @@ export function apply(ctx) {
     return path.join(metaDir, `${mapId}.json`);
   }
 
+  function mapIndexCachePath(mapId) {
+    return path.join(indexCacheDir, `${mapId}.json`);
+  }
+
   async function writeMapMeta(mapId, data) {
     const stats = mapStatsOf(data);
     await writeJsonAtomic(
@@ -382,6 +390,7 @@ export function apply(ctx) {
       delete loaded.stats;
       maps.set(mapId, loaded);
       starLocator = null;
+      await loadIndexCache(mapId);
       metrics.mapsLoaded += 1;
       return loaded;
     })().finally(() => unloadedLoads.delete(mapId));
@@ -1101,6 +1110,7 @@ export function apply(ctx) {
     dataDir = path.join(profileRoot, 'plugin-data', PLUGIN_ID);
     mapsDir = path.join(dataDir, 'maps');
     metaDir = path.join(dataDir, 'meta');
+    indexCacheDir = path.join(dataDir, 'index-cache');
     backupsDir = path.join(dataDir, 'backups');
     indexPath = path.join(dataDir, 'index.json');
     bindingsPath = path.join(dataDir, 'bindings.json');
@@ -1124,6 +1134,7 @@ export function apply(ctx) {
     }
     await fs.mkdir(mapsDir, { recursive: true });
     await fs.mkdir(metaDir, { recursive: true });
+    await fs.mkdir(indexCacheDir, { recursive: true });
     await fs.mkdir(backupsDir, { recursive: true });
     try {
       const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8'));
@@ -1677,6 +1688,99 @@ export function apply(ctx) {
     index.avgdl = index.count ? index.totalLen / index.count : 1;
   }
 
+  function indexSourceHash(mapId) {
+    const data = maps.get(mapId);
+    if (!data) return '';
+    const hash = crypto.createHash('sha1');
+    for (const star of data.stars) {
+      if (star.status !== 'active' || star.disputed) continue;
+      hash.update(star.id);
+      hash.update('\0');
+      hash.update(String(searchSignature(star)));
+      hash.update('\n');
+    }
+    return hash.digest('hex');
+  }
+
+  async function loadIndexCache(mapId) {
+    if (settings.indexCachePersist === false) return false;
+    const data = maps.get(mapId);
+    if (!data || data.stars.length < 2000) return false;
+    try {
+      const raw = JSON.parse(await fs.readFile(mapIndexCachePath(mapId), 'utf8'));
+      if (raw?.version !== 1 || raw?.mapId !== mapId || !Array.isArray(raw.docs)) {
+        return false;
+      }
+      const sourceHash = indexSourceHash(mapId);
+      if (!sourceHash || raw.sourceHash !== sourceHash) return false;
+      const byId = new Map(data.stars.map((star) => [star.id, star]));
+      const index = {
+        mapId,
+        docs: new Map(),
+        postings: new Map(),
+        df: new Map(),
+        count: 0,
+        totalLen: 0,
+        avgdl: 1,
+        sourceHash,
+      };
+      for (const entry of raw.docs) {
+        const star = byId.get(entry?.[0]);
+        if (!star) return false;
+        const tf = new Map(Array.isArray(entry[3]) ? entry[3] : []);
+        index.docs.set(star.id, {
+          star,
+          signature: Number(entry[1]) || 0,
+          len: Number(entry[2]) || 0,
+          tf,
+          haystack: `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase(),
+        });
+      }
+      rebuildPostings(index);
+      indexCache.set(mapId, index);
+      trimLru(indexCache, INDEX_CACHE_MAX, mapId);
+      metrics.indexCacheHits += 1;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function writeIndexCache(index) {
+    if (settings.indexCachePersist === false || !index?.sourceHash) return;
+    const mapId = index.mapId;
+    const data = maps.get(mapId);
+    if (!data || data.stars.length < 2000) return;
+    const docs = [...index.docs.values()].map((doc) => [
+      doc.star.id,
+      doc.signature,
+      doc.len,
+      [...doc.tf.entries()],
+    ]);
+    await enqueueWrite(`indexcache:${mapId}`, () =>
+      writeJsonAtomic(
+        mapIndexCachePath(mapId),
+        {
+          version: 1,
+          mapId,
+          sourceHash: index.sourceHash,
+          docs,
+        },
+        { pretty: false },
+      ),
+    );
+    metrics.indexCacheWrites += 1;
+  }
+
+  function scheduleIndexCacheWrite(index) {
+    if (settings.indexCachePersist === false) return;
+    setTimeout(() => {
+      writeIndexCache(index).catch((error) =>
+        console.error('[memory-star] index cache write failed', error),
+      );
+    }, 0).unref?.();
+  }
+
   function buildIndex(mapId) {
     const data = maps.get(mapId);
     if (!data) return null;
@@ -1693,6 +1797,10 @@ export function apply(ctx) {
     for (const star of data.stars) {
       if (star.status !== 'active' || star.disputed) continue;
       addIndexDoc(index, star);
+    }
+    if (settings.indexCachePersist !== false) {
+      index.sourceHash = indexSourceHash(mapId);
+      scheduleIndexCacheWrite(index);
     }
     indexCache.set(mapId, index);
     trimLru(indexCache, INDEX_CACHE_MAX, mapId);
@@ -1787,6 +1895,10 @@ export function apply(ctx) {
         await new Promise((resolve) => setImmediate(resolve));
       }
       if (indexCache.has(mapId) || dirtyIndex.has(mapId) || dirtyStars.has(mapId)) return;
+      if (settings.indexCachePersist !== false) {
+        index.sourceHash = indexSourceHash(mapId);
+        scheduleIndexCacheWrite(index);
+      }
       indexCache.set(mapId, index);
       trimLru(indexCache, INDEX_CACHE_MAX, mapId);
       metrics.indexPrewarms += 1;
@@ -3279,6 +3391,7 @@ export function apply(ctx) {
             await fs.unlink(mapPath(id)).catch(() => {});
             await fs.unlink(journalPath(id)).catch(() => {});
             await fs.unlink(mapMetaPath(id)).catch(() => {});
+            await fs.unlink(mapIndexCachePath(id)).catch(() => {});
             journalBytes.delete(id);
             indexCache.delete(id);
             dirtyIndex.delete(id);
@@ -3786,6 +3899,7 @@ export function apply(ctx) {
                 journalFsync: Boolean(settings.journalFsync),
                 journalCheckpointMinutes: Number(settings.journalCheckpointMinutes ?? 15),
                 lazyMaps: settings.lazyMaps !== false,
+                indexCachePersist: settings.indexCachePersist !== false,
                 privacyOutputRedaction: settings.privacyOutputRedaction !== false,
               },
               backups,

@@ -786,6 +786,7 @@ weight = clamp(
 ### 10.1 加载与索引
 
 - 启动按 `meta/<mapId>.json` sidecar 跳过非公共、非绑定的 3000+ 星地图解析；首次 `/meta`、viewport、page、导出、搜索时自动加载；备份对未加载地图直接打包原始快照 + journal；`lazyMaps:false` 可关闭；
+- 索引持久化提供实验开关 `indexCachePersist`，默认关闭：大图缓存加载实测慢于冷建，暂不进入默认路径；
 - 地图文件读取与 journal 回放按地图并行，`/health.metrics.bootMs` 记录 boot 耗时；
 - 每图一份混合倒排索引：CJK 按字二元组，拉丁按词切分；
 - 索引保存 `postings`、`df`、`avgdl`、字段长度等 BM25 统计，docs 以 starId 为键；

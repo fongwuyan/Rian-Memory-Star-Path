@@ -7,6 +7,7 @@
 - 中心密、外圈疏的中心向外布局；Host 生成布局，客户端只取视口内星。
 - React 只渲染当前视口 +180px 预取边距的星，缓存其余已加载星，避免越拖 DOM 越大。
 - 视口请求每 80ms 预取，但界面合并为约 180ms 更新一次，避免拖动中每请求都全量重渲染。
+- 索引持久化作为实验开关 `indexCachePersist`（默认 false）：18k 图缓存 9.5MB，冷建约 1.2s，缓存加载约 2.5s，实测更慢，默认关闭。
 - 新增 `tests/backup-restore.mjs`：固定验证备份 zip 中的 snapshot + journal 导入恢复。
 - 启动真正懒加载：`meta/<mapId>.json` 统计 sidecar 让非绑定大图无需解析快照；备份对未加载地图直接打包原始快照 + journal，导入 zip 时回放 journal。
 - 启动地图读取与 journal 回放改为按地图并行；`/health.metrics.bootMs` 记录启动耗时。
