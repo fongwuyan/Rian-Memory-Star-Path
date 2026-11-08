@@ -931,7 +931,7 @@ POST  /plugins/rian-memory-star/api/maps
 
 - 只接受同源、本机回环请求；写操作校验 `Origin` 与 `Content-Type`；
 - 地图分页按权重降序返回活跃星，带 `total / offset / limit / nextOffset / hasMore`；只返回页内边；
-- 地图元信息走 `/maps/:id/meta`；渲染走 `/maps/:id/viewport?cx&cy&w&h&pad`，只返回视口内活跃星与坐标；视口记录精简，详情按需走 `/stars/:id`；
+- 地图元信息走 `/maps/:id/meta`；渲染走 `/maps/:id/viewport?cx&cy&w&h&pad`，只返回视口内活跃星与坐标；视口记录精简，详情按需走 `/stars/:id`；布局按地图 revision 更新，同一 revision 的平移不再全表扫描；
 - 导出 / 导入走单独的 zip 路由；
 - 变更后客户端主动刷新，暂不做 SSE。
 

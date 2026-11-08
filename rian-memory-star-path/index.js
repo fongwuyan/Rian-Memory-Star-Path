@@ -266,6 +266,7 @@ export function apply(ctx) {
   const pendingStats = new Map();
   const indexCache = new Map();
   const layoutCache = new Map();
+  const mapRevisions = new Map();
   const prewarming = new Set();
   let starLocator = null;
   const dirtyIndex = new Set();
@@ -1216,7 +1217,9 @@ export function apply(ctx) {
       starsById,
       grid,
       gridCell,
-      total: count,
+      total: positions.size,
+      activeIds: new Set(positions.keys()),
+      revision: mapRevisions.get(mapId) || 0,
       maxRadius: points.length ? points[0].distance : 0,
       builtAt: Date.now(),
     };
@@ -1249,14 +1252,35 @@ export function apply(ctx) {
     const data = maps.get(mapId);
     if (!layout || !data) return { stars: [], positions: [], edges: [], total: 0 };
     const starsById = layout.starsById;
-    const missing = [];
-    let total = 0;
-    for (const star of data.stars) {
-      if (star.status !== 'active' || star.disputed) continue;
-      total += 1;
-      if (!starsById.has(star.id)) starsById.set(star.id, star);
-      if (!layout.positions.has(star.id)) missing.push(star.id);
+    const revision = mapRevisions.get(mapId) || 0;
+    let missing = [];
+    if (layout.revision !== revision) {
+      const activeIds = new Set();
+      missing = [];
+      for (const star of data.stars) {
+        if (star.status !== 'active' || star.disputed) continue;
+        activeIds.add(star.id);
+        starsById.set(star.id, star);
+        if (!layout.positions.has(star.id)) missing.push(star.id);
+      }
+      for (const starId of layout.positions.keys()) {
+        if (activeIds.has(starId)) continue;
+        layout.positions.delete(starId);
+        starsById.delete(starId);
+      }
+      layout.grid = new Map();
+      for (const [starId, point] of layout.positions) {
+        const key = `${Math.floor(point.x / layout.gridCell)}:${Math.floor(point.y / layout.gridCell)}`;
+        const bucket = layout.grid.get(key);
+        const entry = { id: starId, x: point.x, y: point.y };
+        if (bucket) bucket.push(entry);
+        else layout.grid.set(key, [entry]);
+      }
+      layout.activeIds = activeIds;
+      layout.total = activeIds.size;
+      layout.revision = revision;
     }
+    const total = layout.total || 0;
     if (missing.length) {
       missing.sort();
       let radius = layout.maxRadius + 80;
@@ -1331,6 +1355,7 @@ export function apply(ctx) {
   function invalidateIndex(mapId, starId) {
     if (!mapId) return;
     starLocator = null;
+    mapRevisions.set(mapId, (mapRevisions.get(mapId) || 0) + 1);
     if (!starId) {
       dirtyIndex.add(mapId);
       dirtyStars.delete(mapId);
@@ -3015,6 +3040,7 @@ export function apply(ctx) {
             indexCache.delete(id);
             dirtyIndex.delete(id);
             dirtyStars.delete(id);
+            mapRevisions.delete(id);
             pageCache.delete(id);
             layoutCache.delete(id);
             const deleteTimer = saveTimers.get(id);
