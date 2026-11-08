@@ -2395,8 +2395,8 @@ void main() {
           'style',
           null,
           `
-.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(30px) saturate(1.35);opacity:.98;mix-blend-mode:screen;background:linear-gradient(118deg,transparent 30%,rgba(160,180,255,.1) 42%,rgba(118,92,230,.18) 50%,rgba(60,140,200,.1) 58%,transparent 72%),radial-gradient(ellipse at 72% 22%,var(--ms-nebula-1),transparent 52%),radial-gradient(ellipse at 18% 74%,var(--ms-nebula-2),transparent 50%),radial-gradient(ellipse at 54% 84%,var(--ms-nebula-3),transparent 46%),radial-gradient(circle at 42% 44%,rgba(220,230,255,.06),transparent 30%);animation:ms-drift 30s ease-in-out infinite alternate;will-change:transform}
-.ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(44px);opacity:.26;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 30%,var(--ms-nebula-2),transparent 64%,var(--ms-nebula-3),transparent);animation:ms-spin 120s linear infinite}
+.ms-nebula{position:absolute;inset:-12%;z-index:0;pointer-events:none;filter:blur(30px) saturate(1.35);opacity:.98;mix-blend-mode:screen;background:linear-gradient(118deg,transparent 30%,rgba(160,180,255,.1) 42%,rgba(118,92,230,.18) 50%,rgba(60,140,200,.1) 58%,transparent 72%),radial-gradient(ellipse at 72% 22%,var(--ms-nebula-1),transparent 52%),radial-gradient(ellipse at 18% 74%,var(--ms-nebula-2),transparent 50%),radial-gradient(ellipse at 54% 84%,var(--ms-nebula-3),transparent 46%),radial-gradient(circle at 42% 44%,rgba(220,230,255,.06),transparent 30%)}
+.ms-nebula:before{content:"";position:absolute;inset:-30%;filter:blur(44px);opacity:.26;background:conic-gradient(from 0deg,transparent,var(--ms-nebula-1),transparent 30%,var(--ms-nebula-2),transparent 64%,var(--ms-nebula-3),transparent)}
 .ms-nebula:after{content:"";position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,.95) 0 1px,transparent 1.6px),radial-gradient(circle,rgba(170,210,255,.72) 0 1.2px,transparent 1.8px),radial-gradient(circle,rgba(255,220,170,.58) 0 1.4px,transparent 2px),radial-gradient(circle,rgba(200,180,255,.5) 0 1px,transparent 1.5px);background-size:67px 67px,109px 109px,173px 173px,251px 251px;background-position:0 0,37px 53px,94px 21px,141px 87px;opacity:.64;animation:ms-twinkle 9s ease-in-out infinite alternate}
 .ms-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;background:radial-gradient(circle at 50% 45%,transparent 38%,var(--ms-vignette) 100%)}
 .ms-glass{backdrop-filter:blur(18px) saturate(1.12);-webkit-backdrop-filter:blur(18px) saturate(1.12)}
@@ -2569,7 +2569,7 @@ void main() {
         ),
         h(
           'div',
-          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#02030A' } },
+          { style: { flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#02030A', WebkitAppRegion: 'no-drag' } },
           h('div', { className: 'ms-nebula', 'aria-hidden': true }),
           h(
             'div',
@@ -2592,6 +2592,7 @@ void main() {
                 touchAction: 'none',
                 userSelect: 'none',
                 WebkitUserSelect: 'none',
+                WebkitAppRegion: 'no-drag',
                 willChange: 'transform',
               },
             },
@@ -2873,6 +2874,7 @@ void main() {
                       fontSize: '10px',
                       cursor: 'pointer',
                       opacity: 0.86,
+                      WebkitAppRegion: 'no-drag',
                     },
                   },
                   '重置视图',
