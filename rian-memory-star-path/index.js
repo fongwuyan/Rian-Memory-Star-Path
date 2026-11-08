@@ -229,7 +229,11 @@ export function apply(ctx) {
     saves: 0,
     recalls: 0,
     briefs: 0,
+    indexRebuilds: 0,
+    indexSyncs: 0,
+    searchCandidates: 0,
     lastSearchMs: 0,
+    lastIndexMs: 0,
     lastSearchAt: null,
     lastSaveAt: null,
     lastRecallAt: null,
@@ -731,47 +735,122 @@ export function apply(ctx) {
     if (mapId) dirtyIndex.add(mapId);
   }
 
-  function buildIndex(mapId) {
-    const data = maps.get(mapId);
-    if (!data) return null;
-    const docs = [];
+  function searchSignature(star) {
+    const text = [
+      star.title || '',
+      star.fact || '',
+      (star.tags || []).join(' '),
+      (star.refs || []).join(' '),
+      star.reason || '',
+      star.condition || '',
+    ].join('\n');
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash;
+  }
+
+  function makeIndexDoc(star, signature = searchSignature(star)) {
+    const tf = new Map();
+    let len = 0;
+    const addField = (text, weight) => {
+      if (!text) return;
+      for (const term of tokensOf(text)) {
+        tf.set(term, (tf.get(term) || 0) + weight);
+        len += weight;
+      }
+    };
+    addField(star.title, 3);
+    addField(star.fact, 2);
+    addField((star.tags || []).join(' '), 2);
+    addField((star.refs || []).join(' '), 2);
+    addField(star.reason, 1);
+    addField(star.condition, 1);
+    return {
+      star,
+      tf,
+      len,
+      signature,
+      haystack: `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase(),
+    };
+  }
+
+  function buildPostings(docs) {
+    const postings = new Map();
     const df = new Map();
     let totalLen = 0;
-    for (const star of data.stars) {
-      if (star.status !== 'active' || star.disputed) continue;
-      const tf = new Map();
-      let len = 0;
-      const addField = (text, weight) => {
-        if (!text) return;
-        for (const term of tokensOf(text)) {
-          tf.set(term, (tf.get(term) || 0) + weight);
-          len += weight;
+    docs.forEach((doc, docIndex) => {
+      totalLen += doc.len;
+      for (const term of doc.tf.keys()) {
+        let list = postings.get(term);
+        if (!list) {
+          list = [];
+          postings.set(term, list);
         }
-      };
-      addField(star.title, 3);
-      addField(star.fact, 2);
-      addField((star.tags || []).join(' '), 2);
-      addField((star.refs || []).join(' '), 2);
-      addField(star.reason, 1);
-      addField(star.condition, 1);
-      for (const term of tf.keys()) df.set(term, (df.get(term) || 0) + 1);
-      docs.push({
-        star,
-        tf,
-        len,
-        haystack: `${star.title || ''} ${star.fact || ''} ${(star.tags || []).join(' ')}`.toLowerCase(),
-      });
-      totalLen += len;
-    }
-    const index = {
-      docs,
+        list.push(docIndex);
+        df.set(term, (df.get(term) || 0) + 1);
+      }
+    });
+    return {
+      postings,
       df,
       count: docs.length,
       avgdl: docs.length ? totalLen / docs.length : 1,
+      totalLen,
     };
+  }
+
+  function buildIndex(mapId) {
+    const data = maps.get(mapId);
+    if (!data) return null;
+    const started = Date.now();
+    const docs = [];
+    const byId = new Map();
+    for (const star of data.stars) {
+      if (star.status !== 'active' || star.disputed) continue;
+      byId.set(star.id, docs.length);
+      docs.push(makeIndexDoc(star));
+    }
+    const index = { docs, byId, ...buildPostings(docs), mapId };
     indexCache.set(mapId, index);
     dirtyIndex.delete(mapId);
+    metrics.indexRebuilds += 1;
+    metrics.lastIndexMs = Date.now() - started;
     return index;
+  }
+
+  function syncIndex(mapId, index) {
+    const data = maps.get(mapId);
+    if (!data) return null;
+    const started = Date.now();
+    const docs = [];
+    const byId = new Map();
+    for (const star of data.stars) {
+      if (star.status !== 'active' || star.disputed) continue;
+      const previousIndex = index.byId.get(star.id);
+      const previous = previousIndex === undefined ? undefined : index.docs[previousIndex];
+      const signature = searchSignature(star);
+      const doc =
+        previous && previous.signature === signature
+          ? Object.assign(previous, { star })
+          : makeIndexDoc(star, signature);
+      byId.set(star.id, docs.length);
+      docs.push(doc);
+    }
+    Object.assign(index, { docs, byId, ...buildPostings(docs), mapId });
+    dirtyIndex.delete(mapId);
+    metrics.indexSyncs += 1;
+    metrics.lastIndexMs = Date.now() - started;
+    return index;
+  }
+
+  function ensureIndex(mapId) {
+    const cached = indexCache.get(mapId);
+    if (!cached) return buildIndex(mapId);
+    if (dirtyIndex.has(mapId)) return syncIndex(mapId, cached);
+    return cached;
   }
 
   function bm25Score(doc, queryTerms, index) {
@@ -795,6 +874,33 @@ export function apply(ctx) {
     return [...ids].filter((id) => maps.has(id));
   }
 
+  function diversifyHits(hits, limit) {
+    if (hits.length <= limit) return hits;
+    const pool = hits.slice(0, Math.min(hits.length, limit * 5)).map((hit) => ({
+      ...hit,
+      terms: tokensOf(`${hit.star.title || ''} ${hit.star.fact || ''}`),
+    }));
+    const selected = [];
+    while (selected.length < limit && pool.length) {
+      let bestIndex = 0;
+      let bestValue = -Infinity;
+      for (let index = 0; index < pool.length; index += 1) {
+        const candidate = pool[index];
+        let similarity = 0;
+        for (const chosen of selected) {
+          similarity = Math.max(similarity, dice(candidate.terms, chosen.terms));
+        }
+        const value = candidate.score - similarity * 0.2;
+        if (value > bestValue) {
+          bestValue = value;
+          bestIndex = index;
+        }
+      }
+      selected.push(pool.splice(bestIndex, 1)[0]);
+    }
+    return selected;
+  }
+
   function searchAcrossMaps(mapIds, query, limit) {
     const queryTerms = tokensOf(query);
     if (!queryTerms.size) return [];
@@ -807,23 +913,47 @@ export function apply(ctx) {
     for (const id of mapIds) {
       const data = maps.get(id);
       if (!data) continue;
-      const index = !dirtyIndex.has(id) && indexCache.has(id) ? indexCache.get(id) : buildIndex(id);
-      if (!index) continue;
-      for (const doc of index.docs) {
+      const mapIndex = ensureIndex(id);
+      if (!mapIndex) continue;
+      const candidates = new Set();
+      for (const term of queryTerms) {
+        const posting = mapIndex.postings.get(term);
+        if (!posting) continue;
+        for (const docIndex of posting) candidates.add(docIndex);
+      }
+      metrics.searchCandidates += candidates.size;
+      for (const docIndex of candidates) {
+        const doc = mapIndex.docs[docIndex];
+        if (!doc) continue;
         const star = doc.star;
         if (star.validUntil && Date.parse(star.validUntil) < at) continue;
-        const bm25 = bm25Score(doc, queryTerms, index);
+        const bm25 = bm25Score(doc, queryTerms, mapIndex);
         if (bm25 <= 0) continue;
+        let matchedTerms = 0;
+        for (const term of queryTerms) {
+          if (doc.tf.has(term)) matchedTerms += 1;
+        }
+        const coverage = matchedTerms / queryTerms.size;
         const text = bm25 / (bm25 + 3);
         const typeSignal =
           (preferenceCue && (star.type === 'preference' || star.type === 'decision')) ||
           (procedureCue && star.type === 'procedure')
             ? 1
             : 0;
-        const haystack = doc.haystack;
-        const exactSignal = haystack.includes(lower) ? 1 : 0;
+        const titleLower = String(star.title || '').toLowerCase();
+        const tagsLower = (star.tags || []).join(' ').toLowerCase();
+        const exactSignal =
+          doc.haystack.includes(lower) || titleLower.includes(lower) || tagsLower.includes(lower)
+            ? 1
+            : 0;
+        const minCoverage = queryTerms.size >= 4 ? 0.35 : queryTerms.size >= 2 ? 0.5 : 0;
+        if (!exactSignal && coverage < minCoverage) continue;
         const score =
-          0.45 * text + 0.25 * weightOf(star, at) + 0.15 * typeSignal + 0.15 * exactSignal;
+          0.38 * text +
+          0.22 * weightOf(star, at) +
+          0.1 * typeSignal +
+          0.12 * exactSignal +
+          0.18 * coverage;
         if (score < Number(settings.threshold ?? 0.15)) continue;
         hits.push({ star, map: data.map, score, bm25 });
       }
@@ -832,7 +962,7 @@ export function apply(ctx) {
     metrics.searches += 1;
     metrics.lastSearchMs = Date.now() - searchStarted;
     metrics.lastSearchAt = nowIso();
-    return hits.slice(0, clamp(Number(limit) || 8, 1, 50));
+    return diversifyHits(hits, clamp(Number(limit) || 8, 1, 50));
   }
 
   function searchInternal(agent, mapId, query, limit) {
@@ -984,12 +1114,23 @@ export function apply(ctx) {
     const seen = new Set();
     const lines = [];
     const starIds = [];
+    const touched = new Set();
+    const budget = Math.max(100, Number(settings.tokenBudget ?? 600));
+    let used = 0;
     for (const { star, map } of picked) {
       if (seen.has(star.id)) continue;
+      const line = starLine(star, map);
+      const cost = Math.ceil(line.length / 2);
+      if (lines.length && used + cost > budget) break;
       seen.add(star.id);
       starIds.push(star.id);
-      lines.push(starLine(star, map));
+      lines.push(line);
+      used += cost;
+      star.recallCount = Number(star.recallCount || 0) + 1;
+      star.lastRecalledAt = nowIso();
+      touched.add(star.mapId);
     }
+    for (const id of touched) scheduleMapSave(id);
     noteRecalls(agent?.id, turn, starIds);
     return {
       text: [
@@ -1131,7 +1272,15 @@ export function apply(ctx) {
       throw new Error('Memory is disabled for this workspace.');
     }
     const candidates = similarStars(mapId, title, fact);
-    const best = candidates[0];
+    const normalized = (value) => String(value || '').toLowerCase().replace(/\s+/g, '').trim();
+    const exactKey = `${normalized(title)}\n${normalized(fact)}`;
+    const exactStar = (maps.get(mapId)?.stars || []).find(
+      (star) =>
+        star.status !== 'archived' &&
+        star.status !== 'rejected' &&
+        `${normalized(star.title)}\n${normalized(star.fact)}` === exactKey,
+    );
+    const best = exactStar ? { star: exactStar, similarity: 1 } : candidates[0];
     if (best && best.similarity > 0.8) {
       const existing = best.star;
       const before = {
@@ -1369,11 +1518,21 @@ export function apply(ctx) {
         const from = findStarAcross(String(args?.from ?? ''));
         const to = findStarAcross(String(args?.to ?? ''));
         if (!from || !to) throw new Error('memory not found');
+        const relation = String(args?.relation ?? 'related');
+        const exists = from.data.edges.some(
+          (edge) =>
+            edge.relation === relation &&
+            ((edge.from === from.star.id && edge.to === to.star.id) ||
+              (['related', 'contradicts'].includes(relation) &&
+                edge.from === to.star.id &&
+                edge.to === from.star.id)),
+        );
+        if (exists) return { ok: true };
         from.data.edges.push({
           id: uid('ed'),
           from: from.star.id,
           to: to.star.id,
-          relation: String(args?.relation ?? 'related'),
+          relation,
           createdBy: 'model',
           createdAt: nowIso(),
         });
@@ -1626,6 +1785,32 @@ export function apply(ctx) {
           if (method === 'POST' && parts[0] === 'stars' && !parts[1]) {
             const body = await readBody(req);
             const mapId = body.mapId && maps.has(body.mapId) ? body.mapId : index.publicMapId;
+            if (settings.privacyIncognito) {
+              sendJson(res, 403, { error: 'Memory is paused by privacy settings.' });
+              return;
+            }
+            if (isWorkspaceMuted(maps.get(mapId)?.map.workspaceId)) {
+              sendJson(res, 403, { error: 'Memory is disabled for this workspace.' });
+              return;
+            }
+            const probe = `${body.title ?? ''}\n${body.fact ?? ''}\n${body.reason ?? ''}\n${body.condition ?? ''}\n${
+              Array.isArray(body.tags) ? body.tags.join(' ') : ''
+            }\n${Array.isArray(body.refs) ? body.refs.join(' ') : ''}`;
+            const sensitiveKind = detectSensitive(
+              probe,
+              settings.privacyMode,
+              settings.customSensitiveWords,
+            );
+            if (isSensitive(probe) || sensitiveKind) {
+              sendJson(res, 400, {
+                error: `Sensitive content detected (${sensitiveKind || 'credentials'}); not saved.`,
+              });
+              return;
+            }
+            if (isInstructionLike(probe)) {
+              sendJson(res, 400, { error: 'Instruction-like content detected; not saved.' });
+              return;
+            }
             const star = createStar(body, mapId, 'manual');
             await persistMap(mapId);
             sendJson(res, 200, { star });

@@ -82,6 +82,33 @@ async function main() {
   const pageOneIds = new Set(pageOne.stars.map((star) => star.id));
   assert.equal(pageTwo.stars.filter((star) => pageOneIds.has(star.id)).length, 0);
 
+  const probeTitle = `索引探针${stamp}`;
+  const probe = await createStar(map.id, probeTitle, `增量索引验证 ${stamp}`, ['索引测试']);
+  let probeSearch = await request(`/search?q=${encodeURIComponent(probeTitle)}&limit=10`);
+  assert.ok(
+    probeSearch.stars.some((star) => star.id === probe.id),
+    'expected new star in incremental index',
+  );
+  await request(`/stars/${encodeURIComponent(probe.id)}`, { method: 'DELETE' });
+  probeSearch = await request(`/search?q=${encodeURIComponent(probeTitle)}&limit=10`);
+  assert.ok(
+    !probeSearch.stars.some((star) => star.id === probe.id),
+    'expected deleted star removed from incremental index',
+  );
+
+  const sensitiveResponse = await fetch(`${API}/stars`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      mapId: map.id,
+      title: '敏感写入',
+      fact: 'password: should-not-save',
+      type: 'fact',
+      confidence: 0.95,
+    }),
+  });
+  assert.equal(sensitiveResponse.status, 400, 'expected manual sensitive write to be rejected');
+
   const edgeResult = await request('/edges', {
     method: 'POST',
     body: JSON.stringify({ from: oldStar.id, to: newStar.id, relation: 'contradicts' }),
